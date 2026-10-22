@@ -1,0 +1,16 @@
+.github/workflows/release.yml
+  h_b8a5bec9fccfca 51-65
+README.md
+  h_b8a5bec9fccfca 19-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2255af08d38100e2d172e66c33b0052f02ec6ee5",
+  "prompts": {},
+  "humans": {
+    "h_b8a5bec9fccfca": {
+      "author": "zhanghong <zhanghong@meibaokeji.com>"
+    }
+  }
+}
