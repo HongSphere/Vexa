@@ -1,0 +1,134 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --vx-bg-app: #0b0d13;
+  --vx-bg-sidebar: #10131c;
+  --vx-bg-topbar: rgba(16, 19, 28, 0.95);
+  --vx-bg-card: #151924;
+  --vx-bg-card-hover: #1b202e;
+  --vx-bg-subtle: rgba(255, 255, 255, 0.04);
+  --vx-bg-input: #181d29;
+  --vx-border: rgba(255, 255, 255, 0.07);
+  --vx-text-title: #f8fafc;
+  --vx-text-body: #cbd5e1;
+  --vx-text-muted: #64748b;
+  --vx-shadow-card: 0 4px 20px -2px rgba(0, 0, 0, 0.35);
+}
+
+html.theme-light {
+  --vx-bg-app: #f3f5f9;
+  --vx-bg-sidebar: #ffffff;
+  --vx-bg-topbar: rgba(255, 255, 255, 0.95);
+  --vx-bg-card: #ffffff;
+  --vx-bg-card-hover: #f8fafc;
+  --vx-bg-subtle: #f1f5f9;
+  --vx-bg-input: #f1f5f9;
+  --vx-border: rgba(15, 23, 42, 0.08);
+  --vx-text-title: #0f172a;
+  --vx-text-body: #334155;
+  --vx-text-muted: #64748b;
+  --vx-shadow-card: 0 2px 10px -2px rgba(15, 23, 42, 0.06);
+}
+
+body {
+  background-color: var(--vx-bg-app);
+  color: var(--vx-text-title);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.vx-app {
+  background-color: var(--vx-bg-app);
+  color: var(--vx-text-title);
+}
+
+.vx-sidebar {
+  background-color: var(--vx-bg-sidebar);
+  border-color: var(--vx-border);
+}
+
+.vx-topbar {
+  background-color: var(--vx-bg-topbar);
+  border-color: var(--vx-border);
+}
+
+.vx-card {
+  background-color: var(--vx-bg-card);
+  border: 1px solid var(--vx-border);
+  box-shadow: var(--vx-shadow-card);
+}
+
+.vx-card-interactive {
+  background-color: var(--vx-bg-card);
+  border: 1px solid var(--vx-border);
+  box-shadow: var(--vx-shadow-card);
+  transition: all 0.18s ease;
+}
+
+.vx-card-interactive:hover {
+  background-color: var(--vx-bg-card-hover);
+  border-color: rgba(14, 165, 233, 0.35);
+}
+
+.vx-subtle {
+  background-color: var(--vx-bg-subtle);
+  border-color: var(--vx-border);
+}
+
+.vx-input {
+  background-color: var(--vx-bg-input);
+  border: 1px solid var(--vx-border);
+  color: var(--vx-text-title);
+}
+
+.vx-input::placeholder {
+  color: var(--vx-text-muted);
+}
+
+.vx-title {
+  color: var(--vx-text-title);
+}
+
+.vx-text {
+  color: var(--vx-text-body);
+}
+
+.vx-muted {
+  color: var(--vx-text-muted);
+}
+
+.vx-divider {
+  border-color: var(--vx-border);
+}
+
+/* Custom sleek scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+

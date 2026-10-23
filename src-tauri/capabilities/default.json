@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/capability/2",
+  "identifier": "default",
+  "description": "Default capability for Vexa",
+  "windows": ["main", "login-*"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:default",
+    "process:default",
+    "updater:default"
+  ]
+}

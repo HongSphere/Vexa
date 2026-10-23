@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Default capability for Vexa","local":true,"windows":["main","login-*"],"permissions":["core:default","core:event:default","core:window:default","process:default","updater:default"]}}
