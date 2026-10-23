@@ -1,0 +1,36 @@
+[package]
+name = "vexa"
+version = "1.0.0"
+description = "Vexa - 现代化多源多媒体播放与下载桌面客户端"
+authors = ["HongSphere"]
+edition = "2021"
+
+[lib]
+name = "vexa_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["unstable"] }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "gzip", "deflate", "cookies"] }
+futures-util = "0.3"
+flate2 = "1.0"
+regex = "1"
+urlencoding = "2.1"
+dirs = "5.0"
+once_cell = "1.19"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = "s"
+panic = "abort"

@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgB4" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="35%" stop-color="#f8fafc"/>
+      <stop offset="70%" stop-color="#e2e8f0"/>
+      <stop offset="100%" stop-color="#cbd5e1"/>
+    </linearGradient>
+    <linearGradient id="borderB4" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.95)"/>
+      <stop offset="100%" stop-color="rgba(100,116,139,0.3)"/>
+    </linearGradient>
+    <filter id="darkTextShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#0f172a" flood-opacity="0.14"/>
+    </filter>
+  </defs>
+
+  <!-- Luminous Pearl Canvas -->
+  <rect x="18" y="18" width="476" height="476" rx="112" fill="url(#bgB4)" stroke="url(#borderB4)" stroke-width="2.5"/>
+
+  <!-- Centered Pure Vexa Content -->
+  <g filter="url(#darkTextShadow)">
+    <!-- Cyan Neon Accent Dot over the a/accent -->
+    <circle cx="388" cy="192" r="10" fill="#0284c7"/>
+    <circle cx="388" cy="192" r="20" fill="#38bdf8" opacity="0.32"/>
+
+    <!-- High-Contrast Obsidian Slate Vexa (Larger & Perfectly Centered) -->
+    <text x="256" y="302" 
+          font-family="system-ui, -apple-system, BlinkMacSystemFont, SF Pro Display, Montserrat, Arial, sans-serif" 
+          font-size="136" 
+          font-weight="900" 
+          letter-spacing="-3"
+          text-anchor="middle" 
+          fill="#0f172a">Vexa</text>
+
+    <!-- Sleek Dual-Tone Dynamic Accent Line -->
+    <g transform="translate(256, 345)">
+      <rect x="-70" y="-2" width="140" height="5" rx="2.5" fill="#cbd5e1"/>
+      <rect x="-28" y="-2" width="56" height="5" rx="2.5" fill="#0284c7"/>
+    </g>
+  </g>
+</svg>

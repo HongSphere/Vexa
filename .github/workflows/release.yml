@@ -1,0 +1,211 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "macos-latest"
+            args: "--bundles app,dmg"
+          - platform: "windows-latest"
+            args: "--bundles nsis"
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          TAURI_KEY_PASSWORD: ""
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Vexa ${{ github.ref_name }}"
+          releaseBody: |
+            # Vexa ${{ github.ref_name }} 发布 🎉
+
+            现代化跨平台多媒体播放器与网页工作台，采用 Tauri v2 + Rust 原生流式代理与下载引擎构建。
+
+            ### 🍏 macOS 提示“已损坏 / 无法验证开发者”怎么办？
+            由于开源软件未购买商业 Apple 开发者证书与公证，首次运行可能会被系统 Gatekeeper 门禁拦截。
+            只需在 Mac 终端（Terminal）中运行以下命令：
+            ```bash
+            xattr -dr com.apple.quarantine /Applications/Vexa.app
+            ```
+            *(若提示权限不足，可在命令前加 `sudo`)*
+            或者在 Mac **“系统设置” -> “隐私与安全性”** 中点击 **“仍要打开”** 即可正常使用。
+
+            ### 🪟 Windows 提示 SmartScreen 拦截怎么办？
+            若弹出“Windows 已保护你的电脑”提示窗口，点击 **“更多信息”** -> 点击 **“仍要运行”** 即可。
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
+
+  release-android:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "zulu"
+          java-version: "17"
+
+      - name: Install Android NDK
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.1.10909125"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> $GITHUB_ENV
+
+      - name: Install Rust targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Init Android project
+        run: npx tauri android init --ci
+
+      - name: Inject Android App Icons & Config
+        run: |
+          mkdir -p src-tauri/gen/android/app/src/main/res
+          cp -rf src-tauri/icons/android/* src-tauri/gen/android/app/src/main/res/
+          npx tauri icon src-tauri/icons/icon.png || true
+          MANIFEST="src-tauri/gen/android/app/src/main/AndroidManifest.xml"
+          if [ -f "$MANIFEST" ]; then
+            grep -q "android.permission.INTERNET" "$MANIFEST" || sed -i '/<manifest/a \    <uses-permission android:name="android.permission.INTERNET" />' "$MANIFEST"
+            sed -i 's/\${usesCleartextTraffic}/true/g' "$MANIFEST"
+            sed -i 's/android:name=".MainActivity"/android:name=".MainActivity" android:screenOrientation="portrait"/g' "$MANIFEST"
+          fi
+          MAIN_ACTIVITY=$(find src-tauri/gen/android/app/src/main/java -name "MainActivity.kt" | head -n 1)
+          if [ -n "$MAIN_ACTIVITY" ] && [ -f "scripts/MainActivity.kt" ]; then
+            cp scripts/MainActivity.kt "$MAIN_ACTIVITY"
+          fi
+          echo "Verified Android Manifest:"
+          grep -C 3 "usesCleartextTraffic" "$MANIFEST" || true
+          echo "Verified MainActivity:"
+          cat "$MAIN_ACTIVITY" || true
+          echo "Verified Android Icons:"
+          ls -la src-tauri/gen/android/app/src/main/res/mipmap-xxhdpi/ || true
+
+      - name: Build Android APK
+        run: npx tauri android build --apk
+
+      - name: Sign Android APK
+        run: |
+          keytool -genkeypair -v -keystore release.keystore -alias vexa -keyalg RSA -keysize 2048 -validity 10000 -storepass vexa123 -keypass vexa123 -dname "CN=Vexa, OU=App, O=Vexa, L=Hangzhou, ST=Zhejiang, C=CN"
+          BUILD_TOOLS_DIR=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
+          echo "Using Android Build Tools: $BUILD_TOOLS_DIR"
+          UNSIGNED_APK=$(find src-tauri/gen/android/app/build/outputs/apk -name "*unsigned.apk" | head -n 1)
+          echo "Found unsigned APK: $UNSIGNED_APK"
+          CLEAN_VER="${GITHUB_REF_NAME#v}"
+          if [ -z "$CLEAN_VER" ] || [ "$CLEAN_VER" = "$GITHUB_REF_NAME" ]; then
+            CLEAN_VER="1.0.0"
+          fi
+          APK_NAME="Vexa_${CLEAN_VER}.apk"
+          $BUILD_TOOLS_DIR/apksigner sign --ks release.keystore --ks-pass pass:vexa123 --key-pass pass:vexa123 --out "$APK_NAME" "$UNSIGNED_APK"
+          $BUILD_TOOLS_DIR/apksigner verify --verbose "$APK_NAME"
+          echo "APK_NAME=$APK_NAME" >> $GITHUB_ENV
+
+      - name: Upload APK to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vexa-Android-APK
+          path: ${{ env.APK_NAME }}
+
+      - name: Upload APK to GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: ${{ env.APK_NAME }}
+
+  release-ios:
+    needs: release
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,x86_64-apple-ios,aarch64-apple-ios-sim
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Init iOS project
+        run: npx tauri ios init --ci --skip-targets-install
+
+      - name: Inject iOS App Icons
+        run: |
+          npx tauri icon src-tauri/icons/icon.png || true
+
+      - name: Build iOS IPA
+        run: |
+          npx tauri ios build --no-sign
+          mkdir -p Payload
+          find src-tauri/gen/apple/build -name "*.app" -exec cp -r {} Payload/ \; 2>/dev/null || true
+          if [ "$(ls -A Payload 2>/dev/null)" ]; then
+            zip -r Vexa_iOS_unsigned.ipa Payload
+          fi
+
+      - name: Upload iOS IPA to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vexa-iOS-IPA
+          path: "*.ipa"
+          if-no-files-found: ignore
+
+      - name: Upload iOS IPA to GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: "*.ipa"
