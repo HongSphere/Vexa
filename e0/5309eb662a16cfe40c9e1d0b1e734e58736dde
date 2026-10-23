@@ -1,0 +1,24 @@
+src/components/PlayerView.tsx
+  h_b8a5bec9fccfca 1,40,190-197,303-304,309
+src/components/VideoPlayer.tsx
+  h_b8a5bec9fccfca 85,127-128,462,474,493,502-511
+src/mobile/MobileApp.tsx
+  h_b8a5bec9fccfca 13,17-18,29-30,33
+src/mobile/views/MobileDiscoverView.tsx
+  h_b8a5bec9fccfca 1,33,95-112,312-313,379,385,389
+src/mobile/views/MobilePlayerView.tsx
+  h_b8a5bec9fccfca 42-44,79-88,91-122,306-313,317-318,322,327,340,361
+src/store/useAppStore.ts
+  h_b8a5bec9fccfca 114-115,363-364,424-427,431-433,438,440-441
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e05309eb662a16cfe40c9e1d0b1e734e58736dde",
+  "prompts": {},
+  "humans": {
+    "h_b8a5bec9fccfca": {
+      "author": "zhanghong <zhanghong@meibaokeji.com>"
+    }
+  }
+}
