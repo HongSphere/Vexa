@@ -1,0 +1,134 @@
+README.md
+  h_b8a5bec9fccfca 1-164
+src/main.tsx
+  h_b8a5bec9fccfca 1-10
+src-tauri/gen/schemas/desktop-schema.json
+  h_b8a5bec9fccfca 1-2400
+src-tauri/Cargo.lock
+  h_b8a5bec9fccfca 1-5483
+src-tauri/capabilities/default.json
+  h_b8a5bec9fccfca 1-13
+.github/workflows/release.yml
+  h_b8a5bec9fccfca 1-169
+src/components/VexaLogo.tsx
+  h_b8a5bec9fccfca 1-94
+.gitignore
+  h_b8a5bec9fccfca 1-34
+src/mobile/views/MobileDownloadsView.tsx
+  h_b8a5bec9fccfca 1-214
+src-tauri/src/auth.rs
+  h_b8a5bec9fccfca 1-62
+src/mobile/views/MobileHistoryView.tsx
+  h_b8a5bec9fccfca 1-208
+src/mobile/views/MobileSettingsView.tsx
+  h_b8a5bec9fccfca 1-312
+src/mobile/MobileApp.tsx
+  h_b8a5bec9fccfca 1-45
+src/App.tsx
+  h_b8a5bec9fccfca 1-89
+src-tauri/src/browser.rs
+  h_b8a5bec9fccfca 1-20,22-521,523-580,584-588,590-648,650-817,835-836,838-864,868,871-873,875-886,892-893
+  h_b8a5bec9fccfca 21,522,581-583,589,649,818-834,837,865-867,869-870,874,887-891
+LICENSE
+  h_b8a5bec9fccfca 1-21
+src-tauri/src/proxy.rs
+  h_b8a5bec9fccfca 1-325
+src-tauri/src/extractor.rs
+  h_b8a5bec9fccfca 1-1980
+src-tauri/src/sources_config.rs
+  h_b8a5bec9fccfca 1-201
+src/index.css
+  h_b8a5bec9fccfca 1-134
+src/components/DownloadsView.tsx
+  h_b8a5bec9fccfca 1-255
+src-tauri/src/lib.rs
+  h_b8a5bec9fccfca 1-190
+package-lock.json
+  h_b8a5bec9fccfca 1-3071
+src-tauri/Cargo.toml
+  h_b8a5bec9fccfca 1-36
+src/components/HistoryView.tsx
+  h_b8a5bec9fccfca 1-190
+src-tauri/src/downloader.rs
+  h_b8a5bec9fccfca 1-471,474-482,484-489
+  h_b8a5bec9fccfca 472-473,483
+src-tauri/src/main.rs
+  h_b8a5bec9fccfca 1-5
+src/utils/format.ts
+  h_b8a5bec9fccfca 1-47
+src-tauri/gen/schemas/capabilities.json
+  h_b8a5bec9fccfca 1
+src-tauri/src/updater.rs
+  h_b8a5bec9fccfca 1-184
+src-tauri/tauri.conf.json
+  h_b8a5bec9fccfca 1-52
+src/mobile/components/MobileTabBar.tsx
+  h_b8a5bec9fccfca 1-128
+src-tauri/src/models.rs
+  h_b8a5bec9fccfca 1-135
+src/mobile/views/MobilePlayerView.tsx
+  h_b8a5bec9fccfca 1-571
+src-tauri/build.rs
+  h_b8a5bec9fccfca 1-3
+sources.sample.json
+  h_b8a5bec9fccfca 1-7
+tsconfig.json
+  h_b8a5bec9fccfca 1-21
+src/mobile/components/MobileHeader.tsx
+  h_b8a5bec9fccfca 1-59
+public/favicon.svg
+  h_b8a5bec9fccfca 1-42
+src/components/PlayerView.tsx
+  h_b8a5bec9fccfca 1-683
+src/store/useAppStore.ts
+  h_b8a5bec9fccfca 1-726
+src/components/DiscoverView.tsx
+  h_b8a5bec9fccfca 1-153
+index.html
+  h_b8a5bec9fccfca 1-13
+tsconfig.node.json
+  h_b8a5bec9fccfca 1-10
+src/components/TopBar.tsx
+  h_b8a5bec9fccfca 1-279
+src-tauri/gen/schemas/macOS-schema.json
+  h_b8a5bec9fccfca 1-2400
+src/services/api.ts
+  h_b8a5bec9fccfca 1-245
+postcss.config.js
+  h_b8a5bec9fccfca 1-6
+package.json
+  h_b8a5bec9fccfca 1-33
+src/types/media.ts
+  h_b8a5bec9fccfca 1-180
+src-tauri/icons/icon.svg
+  h_b8a5bec9fccfca 1-42
+src/components/VideoPlayer.tsx
+  h_b8a5bec9fccfca 1-1060
+src/components/SettingsView.tsx
+  h_b8a5bec9fccfca 1-602
+src/hooks/useIsMobile.ts
+  h_b8a5bec9fccfca 1-40
+src/desktop/DesktopApp.tsx
+  h_b8a5bec9fccfca 1-46
+src/components/Sidebar.tsx
+  h_b8a5bec9fccfca 1-115
+tailwind.config.js
+  h_b8a5bec9fccfca 1-18
+vite.config.ts
+  h_b8a5bec9fccfca 1-24
+src/mobile/views/MobileDiscoverView.tsx
+  h_b8a5bec9fccfca 1-365
+src-tauri/gen/schemas/acl-manifests.json
+  h_b8a5bec9fccfca 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e1e2c43a70779fdbd444bd154eac32b96900410c",
+  "prompts": {},
+  "humans": {
+    "h_b8a5bec9fccfca": {
+      "author": "zhanghong <zhanghong@meibaokeji.com>"
+    }
+  }
+}
