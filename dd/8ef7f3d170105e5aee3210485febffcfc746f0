@@ -1,0 +1,141 @@
+public/favicon.svg
+  h_b8a5bec9fccfca 1-42
+src-tauri/tauri.conf.json
+  h_b8a5bec9fccfca 1-52
+src/components/VexaLogo.tsx
+  h_b8a5bec9fccfca 1-94
+src-tauri/icons/android/values/ic_launcher_background.xml
+  h_b8a5bec9fccfca 1-4
+tsconfig.json
+  h_b8a5bec9fccfca 1-21
+src/components/DownloadsView.tsx
+  h_b8a5bec9fccfca 1-255
+src/desktop/DesktopApp.tsx
+  h_b8a5bec9fccfca 1-46
+src-tauri/src/proxy.rs
+  h_b8a5bec9fccfca 1-325
+src/components/Sidebar.tsx
+  h_b8a5bec9fccfca 1-115
+src/mobile/views/MobilePlayerView.tsx
+  h_b8a5bec9fccfca 1-571
+README.md
+  h_b8a5bec9fccfca 1-164
+src/mobile/components/MobileTabBar.tsx
+  h_b8a5bec9fccfca 1-132
+.github/workflows/release.yml
+  h_b8a5bec9fccfca 1-198
+src/services/api.ts
+  h_b8a5bec9fccfca 1-245
+tsconfig.node.json
+  h_b8a5bec9fccfca 1-10
+src-tauri/src/updater.rs
+  h_b8a5bec9fccfca 1-184
+src-tauri/Cargo.toml
+  h_b8a5bec9fccfca 1-36
+src/App.tsx
+  h_b8a5bec9fccfca 1-89
+src/hooks/useIsMobile.ts
+  h_b8a5bec9fccfca 1-56
+src-tauri/src/auth.rs
+  h_b8a5bec9fccfca 1-78
+src/utils/format.ts
+  h_b8a5bec9fccfca 1-47
+src/mobile/MobileApp.tsx
+  h_b8a5bec9fccfca 1-48
+src-tauri/gen/schemas/desktop-schema.json
+  h_b8a5bec9fccfca 1-2400
+src-tauri/icons/android/mipmap-anydpi-v26/ic_launcher_round.xml
+  h_b8a5bec9fccfca 1-5
+src/components/VideoPlayer.tsx
+  h_b8a5bec9fccfca 1-384,393-394,403-404,419-588,593,605-1103
+  h_b8a5bec9fccfca 385-392,395-402,405-418,589-592,594-604
+src/mobile/components/MobileHeader.tsx
+  h_b8a5bec9fccfca 1-64
+src-tauri/gen/schemas/capabilities.json
+  h_b8a5bec9fccfca 1
+src-tauri/src/extractor.rs
+  h_b8a5bec9fccfca 1-1980
+sources.sample.json
+  h_b8a5bec9fccfca 1-136
+package.json
+  h_b8a5bec9fccfca 1-33
+src/components/HistoryView.tsx
+  h_b8a5bec9fccfca 1-190
+src-tauri/Cargo.lock
+  h_b8a5bec9fccfca 1-5483
+src/mobile/views/MobileDownloadsView.tsx
+  h_b8a5bec9fccfca 1-214
+tailwind.config.js
+  h_b8a5bec9fccfca 1-18
+src-tauri/capabilities/default.json
+  h_b8a5bec9fccfca 1-13
+src-tauri/gen/schemas/macOS-schema.json
+  h_b8a5bec9fccfca 1-2400
+src-tauri/src/browser.rs
+  h_b8a5bec9fccfca 1-893
+package-lock.json
+  h_b8a5bec9fccfca 1-3071
+src/mobile/views/MobileDiscoverView.tsx
+  h_b8a5bec9fccfca 1-10,13-15,18-20,26-74,76-80,83-85,87-90,92-98,100-103,105-107,111,113-115,117-120,122,124-125,127,129,132-140,145,147-150,154-155,157-170,280-281,283-301,303-310,312-316
+  h_b8a5bec9fccfca 11-12,16-17,21-25,75,81-82,86,91,99,104,108-110,112,116,121,123,126,128,130-131,141-144,146,151-153,156,171-279,282,302,311,317-318
+src/components/SettingsView.tsx
+  h_b8a5bec9fccfca 1-602
+src/types/media.ts
+  h_b8a5bec9fccfca 1-180
+src-tauri/icons/android/mipmap-anydpi-v26/ic_launcher.xml
+  h_b8a5bec9fccfca 1-5
+postcss.config.js
+  h_b8a5bec9fccfca 1-6
+src/components/TopBar.tsx
+  h_b8a5bec9fccfca 1-279
+src/components/PlayerView.tsx
+  h_b8a5bec9fccfca 1-683
+src-tauri/icons/icon.svg
+  h_b8a5bec9fccfca 1-42
+src-tauri/gen/schemas/acl-manifests.json
+  h_b8a5bec9fccfca 1
+src/mobile/views/MobileHistoryView.tsx
+  h_b8a5bec9fccfca 1-208
+src-tauri/src/sources_config.rs
+  h_b8a5bec9fccfca 1-229
+src-tauri/src/models.rs
+  h_b8a5bec9fccfca 1-135
+vite.config.ts
+  h_b8a5bec9fccfca 1-24
+src/main.tsx
+  h_b8a5bec9fccfca 1-10
+.gitignore
+  h_b8a5bec9fccfca 1-34
+src/mobile/views/MobileSettingsView.tsx
+  h_b8a5bec9fccfca 1-69,71-430
+  h_b8a5bec9fccfca 70
+index.html
+  h_b8a5bec9fccfca 1-13
+src/components/DiscoverView.tsx
+  h_b8a5bec9fccfca 1-153
+src-tauri/src/downloader.rs
+  h_b8a5bec9fccfca 1-500
+src/store/useAppStore.ts
+  h_b8a5bec9fccfca 1-726
+src-tauri/build.rs
+  h_b8a5bec9fccfca 1-3
+LICENSE
+  h_b8a5bec9fccfca 1-21
+src-tauri/src/main.rs
+  h_b8a5bec9fccfca 1-5
+src/index.css
+  h_b8a5bec9fccfca 1-134
+src-tauri/src/lib.rs
+  h_b8a5bec9fccfca 1-216
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dd8ef7f3d170105e5aee3210485febffcfc746f0",
+  "prompts": {},
+  "humans": {
+    "h_b8a5bec9fccfca": {
+      "author": "zhanghong <zhanghong@meibaokeji.com>"
+    }
+  }
+}
