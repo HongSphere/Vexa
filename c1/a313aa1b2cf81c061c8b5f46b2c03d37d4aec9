@@ -1,0 +1,74 @@
+.github/workflows/release.yml
+  h_b8a5bec9fccfca 70-173
+package.json
+  h_b8a5bec9fccfca 4
+sources.sample.json
+  h_b8a5bec9fccfca 3-6
+src-tauri/Cargo.toml
+  h_b8a5bec9fccfca 3
+src-tauri/src/browser.rs
+  h_b8a5bec9fccfca 11-28,272-281,283-285,294-298,300-309,317-381,391-400,402-408,417,420-429,435,439,451,522,584-591,593-595,603-635,639,650,654-661,663-696,701-702,715-721,727-728,737,764-766,799-803,814,845
+src-tauri/src/lib.rs
+  h_b8a5bec9fccfca 85,88
+src-tauri/src/sources_config.rs
+  h_b8a5bec9fccfca 18-19,80,90-91
+src-tauri/tauri.conf.json
+  h_b8a5bec9fccfca 4
+src/App.tsx
+  h_b8a5bec9fccfca 2-4,14,86
+src/components/DiscoverView.tsx
+  h_b8a5bec9fccfca 4,36,114-115,119,121-150
+src/components/DownloadsView.tsx
+  h_b8a5bec9fccfca 81
+src/components/HistoryView.tsx
+  h_b8a5bec9fccfca 13-20,29,68-71,155-161,163-181
+src/components/PlayerView.tsx
+  h_b8a5bec9fccfca 258
+src/components/SettingsView.tsx
+  h_b8a5bec9fccfca 202,350
+src/components/Sidebar.tsx
+  h_b8a5bec9fccfca 62-64
+src/components/TopBar.tsx
+  h_b8a5bec9fccfca 130-136
+src/components/VexaLogo.tsx
+  h_b8a5bec9fccfca 35-37,45,47-50,54
+src/components/VideoPlayer.tsx
+  h_b8a5bec9fccfca 23,91,97-120,502-553,557-559,666-682,689,692-694,697-701,703-711,717-724,726,728,753,755,758,762,764,769,793,797,803-805,810,812-813,817,819-847,849-858,860-903,906-908,910,918-922,924-929,933-934,943,950,952,960,976-980,982-986,990,995,1001-1004,1014,1027,1037,1046,1050,1052
+src/desktop/DesktopApp.tsx
+  h_b8a5bec9fccfca 1-46
+src/hooks/useIsMobile.ts
+  h_b8a5bec9fccfca 1-40
+src/mobile/MobileApp.tsx
+  h_b8a5bec9fccfca 1-45
+src/mobile/components/MobileHeader.tsx
+  h_b8a5bec9fccfca 1-59
+src/mobile/components/MobileTabBar.tsx
+  h_b8a5bec9fccfca 1-128
+src/mobile/views/MobileDiscoverView.tsx
+  h_b8a5bec9fccfca 1-365
+src/mobile/views/MobileDownloadsView.tsx
+  h_b8a5bec9fccfca 1-214
+src/mobile/views/MobileHistoryView.tsx
+  h_b8a5bec9fccfca 1-208
+src/mobile/views/MobilePlayerView.tsx
+  h_b8a5bec9fccfca 1-571
+src/mobile/views/MobileSettingsView.tsx
+  h_b8a5bec9fccfca 1-312
+src/services/api.ts
+  h_b8a5bec9fccfca 12,95,105,193-196,203-208,214-218,231-236
+src/store/useAppStore.ts
+  h_b8a5bec9fccfca 79,108,255,342-347,464,466,468,470,472,474
+src/types/media.ts
+  h_b8a5bec9fccfca 154
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c1a313aa1b2cf81c061c8b5f46b2c03d37d4aec9",
+  "prompts": {},
+  "humans": {
+    "h_b8a5bec9fccfca": {
+      "author": "zhanghong <zhanghong@meibaokeji.com>"
+    }
+  }
+}
