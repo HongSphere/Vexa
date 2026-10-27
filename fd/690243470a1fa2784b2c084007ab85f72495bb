@@ -1,0 +1,40 @@
+.github/workflows/release.yml
+  h_b8a5bec9fccfca 132-133,139,146
+package.json
+  h_b8a5bec9fccfca 4
+src-tauri/Cargo.lock
+  h_b8a5bec9fccfca 4515
+src-tauri/Cargo.toml
+  h_b8a5bec9fccfca 3
+src-tauri/capabilities/default.json
+  h_b8a5bec9fccfca 8
+src-tauri/gen/schemas/capabilities.json
+  h_b8a5bec9fccfca 1
+src-tauri/src/proxy.rs
+  h_b8a5bec9fccfca 439,443-448,453-470,514,516-520,532,534-556,573-575,581-583
+src-tauri/tauri.conf.json
+  h_b8a5bec9fccfca 4
+src/components/SettingsView.tsx
+  h_b8a5bec9fccfca 462
+src/components/Sidebar.tsx
+  h_b8a5bec9fccfca 69
+src/mobile/MobileApp.tsx
+  h_b8a5bec9fccfca 69,76-78,80-88,98
+src/mobile/views/MobileDiscoverView.tsx
+  h_b8a5bec9fccfca 271
+src/mobile/views/MobilePlayerView.tsx
+  h_b8a5bec9fccfca 350
+src/mobile/views/MobileSettingsView.tsx
+  h_b8a5bec9fccfca 384
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fd690243470a1fa2784b2c084007ab85f72495bb",
+  "prompts": {},
+  "humans": {
+    "h_b8a5bec9fccfca": {
+      "author": "zhanghong <zhanghong@meibaokeji.com>"
+    }
+  }
+}
