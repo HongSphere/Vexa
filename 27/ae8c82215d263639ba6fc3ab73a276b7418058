@@ -1,0 +1,144 @@
+package-lock.json
+  h_b8a5bec9fccfca 1-3071
+README.md
+  h_b8a5bec9fccfca 1-164
+src-tauri/gen/schemas/macOS-schema.json
+  h_b8a5bec9fccfca 1-2400
+public/favicon.svg
+  h_b8a5bec9fccfca 1-42
+src/main.tsx
+  h_b8a5bec9fccfca 1-10
+postcss.config.js
+  h_b8a5bec9fccfca 1-6
+LICENSE
+  h_b8a5bec9fccfca 1-21
+src/components/HistoryView.tsx
+  h_b8a5bec9fccfca 1-190
+.gitignore
+  h_b8a5bec9fccfca 1-34
+package.json
+  h_b8a5bec9fccfca 1-33
+src-tauri/src/downloader.rs
+  h_b8a5bec9fccfca 1-512
+src/mobile/components/MobileVideoPlayer.tsx
+  h_b8a5bec9fccfca 1-151,153-165,195-447,449-462,464-480,482-542,544,551-625,628-688,690-928,930-1187
+  h_b8a5bec9fccfca 152,166-194,448,463,481,543,545-550,626-627,689,929
+src/mobile/views/MobileHistoryView.tsx
+  h_b8a5bec9fccfca 1-208
+index.html
+  h_b8a5bec9fccfca 1-13
+src-tauri/gen/schemas/desktop-schema.json
+  h_b8a5bec9fccfca 1-2400
+src-tauri/icons/android/mipmap-anydpi-v26/ic_launcher_round.xml
+  h_b8a5bec9fccfca 1-5
+src/mobile/MobileApp.tsx
+  h_b8a5bec9fccfca 1-48
+src-tauri/capabilities/default.json
+  h_b8a5bec9fccfca 1-13
+src/utils/format.ts
+  h_b8a5bec9fccfca 1-32
+tsconfig.json
+  h_b8a5bec9fccfca 1-21
+src/store/useAppStore.ts
+  h_b8a5bec9fccfca 1-730
+src/types/media.ts
+  h_b8a5bec9fccfca 1-172
+src/services/api.ts
+  h_b8a5bec9fccfca 1-245
+src-tauri/icons/android/values/ic_launcher_background.xml
+  h_b8a5bec9fccfca 1-4
+src/components/VexaLogo.tsx
+  h_b8a5bec9fccfca 1-94
+src-tauri/src/proxy.rs
+  h_b8a5bec9fccfca 1-20,22-332,334-369,384-403,405-422,424-430,448-450,452-458,469-474,480-486,511-591,598-607,628-631
+  h_b8a5bec9fccfca 21,333,370-383,404,423,431-447,451,459-468,475-479,487-510,592-597,608-627
+src/components/DiscoverView.tsx
+  h_b8a5bec9fccfca 1-153
+src-tauri/src/extractor.rs
+  h_b8a5bec9fccfca 1-1796
+src-tauri/gen/schemas/capabilities.json
+  h_b8a5bec9fccfca 1
+src/mobile/components/MobileHeader.tsx
+  h_b8a5bec9fccfca 1-64
+sources.sample.json
+  h_b8a5bec9fccfca 1-7
+src/components/PlayerView.tsx
+  h_b8a5bec9fccfca 1-687
+src/components/VideoPlayer.tsx
+  h_b8a5bec9fccfca 1-1347
+src/components/DownloadsView.tsx
+  h_b8a5bec9fccfca 1-255
+src/hooks/useIsMobile.ts
+  h_b8a5bec9fccfca 1-19,21-58
+  h_b8a5bec9fccfca 20
+src/mobile/views/MobilePlayerView.tsx
+  h_b8a5bec9fccfca 1-743
+src-tauri/src/sources_config.rs
+  h_b8a5bec9fccfca 1-215
+src-tauri/src/lib.rs
+  h_b8a5bec9fccfca 1-216
+src-tauri/src/main.rs
+  h_b8a5bec9fccfca 1-5
+src/mobile/views/MobileDiscoverView.tsx
+  h_b8a5bec9fccfca 1-183,185-206,210-215,217-228,230-231,233-258
+  h_b8a5bec9fccfca 184,207-209,216,229,232
+.github/workflows/release.yml
+  h_b8a5bec9fccfca 1-198
+src/App.tsx
+  h_b8a5bec9fccfca 1-89
+src-tauri/src/auth.rs
+  h_b8a5bec9fccfca 1-78
+src-tauri/src/browser.rs
+  h_b8a5bec9fccfca 1-886
+tsconfig.node.json
+  h_b8a5bec9fccfca 1-10
+src/components/TopBar.tsx
+  h_b8a5bec9fccfca 1-270
+src-tauri/Cargo.toml
+  h_b8a5bec9fccfca 1-36
+src-tauri/Cargo.lock
+  h_b8a5bec9fccfca 1-5483
+tailwind.config.js
+  h_b8a5bec9fccfca 1-18
+src/index.css
+  h_b8a5bec9fccfca 1-134
+src/desktop/DesktopApp.tsx
+  h_b8a5bec9fccfca 1-46
+src-tauri/src/updater.rs
+  h_b8a5bec9fccfca 1-184
+src/mobile/views/MobileDownloadsView.tsx
+  h_b8a5bec9fccfca 1-214
+src-tauri/icons/android/mipmap-anydpi-v26/ic_launcher.xml
+  h_b8a5bec9fccfca 1-5
+vite.config.ts
+  h_b8a5bec9fccfca 1-24
+src/mobile/components/MobileTabBar.tsx
+  h_b8a5bec9fccfca 1-132
+src/mobile/views/MobileSettingsView.tsx
+  h_b8a5bec9fccfca 1-430
+src-tauri/icons/icon.svg
+  h_b8a5bec9fccfca 1-42
+src/components/Sidebar.tsx
+  h_b8a5bec9fccfca 1-115
+src-tauri/src/models.rs
+  h_b8a5bec9fccfca 1-135
+src-tauri/build.rs
+  h_b8a5bec9fccfca 1-3
+src/components/SettingsView.tsx
+  h_b8a5bec9fccfca 1-602
+src-tauri/tauri.conf.json
+  h_b8a5bec9fccfca 1-52
+src-tauri/gen/schemas/acl-manifests.json
+  h_b8a5bec9fccfca 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "27ae8c82215d263639ba6fc3ab73a276b7418058",
+  "prompts": {},
+  "humans": {
+    "h_b8a5bec9fccfca": {
+      "author": "zhanghong <zhanghong@meibaokeji.com>"
+    }
+  }
+}
