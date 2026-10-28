@@ -1,0 +1,149 @@
+vite.config.ts
+  h_b8a5bec9fccfca 1-24
+src/components/TopBar.tsx
+  h_b8a5bec9fccfca 1-270
+src/components/Sidebar.tsx
+  h_b8a5bec9fccfca 1-115
+src/index.css
+  h_b8a5bec9fccfca 1-134
+src/mobile/views/MobileDownloadsView.tsx
+  h_b8a5bec9fccfca 1-214
+src-tauri/gen/schemas/macOS-schema.json
+  h_b8a5bec9fccfca 1-2400
+src/mobile/components/MobileHeader.tsx
+  h_b8a5bec9fccfca 1-64
+LICENSE
+  h_b8a5bec9fccfca 1-21
+src/hooks/useIsMobile.ts
+  h_b8a5bec9fccfca 1-58
+src/components/PlayerView.tsx
+  h_b8a5bec9fccfca 1-687
+package-lock.json
+  h_b8a5bec9fccfca 1-3071
+src/mobile/views/MobileSettingsView.tsx
+  h_b8a5bec9fccfca 1-499
+src/mobile/components/MobileVideoPlayer.tsx
+  h_b8a5bec9fccfca 1-1165
+src/components/VideoPlayer.tsx
+  h_b8a5bec9fccfca 1-1347
+index.html
+  h_b8a5bec9fccfca 1-13
+src/mobile/components/MobileTabBar.tsx
+  h_b8a5bec9fccfca 1-132
+tailwind.config.js
+  h_b8a5bec9fccfca 1-18
+src-tauri/gen/schemas/acl-manifests.json
+  h_b8a5bec9fccfca 1
+src/components/VexaLogo.tsx
+  h_b8a5bec9fccfca 1-94
+public/favicon.svg
+  h_b8a5bec9fccfca 1-42
+tsconfig.json
+  h_b8a5bec9fccfca 1-21
+.github/workflows/release.yml
+  h_b8a5bec9fccfca 1-211
+src/App.tsx
+  h_b8a5bec9fccfca 1-89
+src/mobile/views/MobileDiscoverView.tsx
+  h_b8a5bec9fccfca 1-287
+src-tauri/gen/schemas/desktop-schema.json
+  h_b8a5bec9fccfca 1-2400
+src/desktop/DesktopApp.tsx
+  h_b8a5bec9fccfca 1-46
+src-tauri/src/proxy.rs
+  h_b8a5bec9fccfca 1-454,457-465,470-518,520-538,540,563-568,571-572,574-774
+  h_b8a5bec9fccfca 455-456,466-469,519,539,541-562,569-570,573,775-1238
+src-tauri/gen/schemas/capabilities.json
+  h_b8a5bec9fccfca 1
+src-tauri/src/sources_config.rs
+  h_b8a5bec9fccfca 1-247
+.gitignore
+  h_b8a5bec9fccfca 1-35
+src/components/DownloadsView.tsx
+  h_b8a5bec9fccfca 1-255
+src-tauri/build.rs
+  h_b8a5bec9fccfca 1-3
+src-tauri/gen/schemas/mobile-schema.json
+  h_b8a5bec9fccfca 1-2400
+src-tauri/gen/schemas/android-schema.json
+  h_b8a5bec9fccfca 1-2400
+src-tauri/Cargo.toml
+  h_b8a5bec9fccfca 1-36
+src-tauri/icons/android/mipmap-anydpi-v26/ic_launcher_round.xml
+  h_b8a5bec9fccfca 1-5
+package.json
+  h_b8a5bec9fccfca 1-33
+src-tauri/src/browser.rs
+  h_b8a5bec9fccfca 1-886
+src/types/media.ts
+  h_b8a5bec9fccfca 1-172
+src-tauri/Cargo.lock
+  h_b8a5bec9fccfca 1-5483
+src/mobile/MobileApp.tsx
+  h_b8a5bec9fccfca 1-131
+  h_b8a5bec9fccfca 132-137
+src-tauri/icons/android/mipmap-anydpi-v26/ic_launcher.xml
+  h_b8a5bec9fccfca 1-5
+src-tauri/src/extractor.rs
+  h_b8a5bec9fccfca 1-1796
+src/utils/format.ts
+  h_b8a5bec9fccfca 1-32
+src-tauri/src/models.rs
+  h_b8a5bec9fccfca 1-135
+README.md
+  h_b8a5bec9fccfca 1-164
+src/mobile/views/MobilePlayerView.tsx
+  h_b8a5bec9fccfca 1-73,77,80-89,92,95-689
+  h_b8a5bec9fccfca 74-76,78-79,90-91,93-94
+src-tauri/src/downloader.rs
+  h_b8a5bec9fccfca 1-512
+src/components/HistoryView.tsx
+  h_b8a5bec9fccfca 1-190
+src-tauri/src/auth.rs
+  h_b8a5bec9fccfca 1-78
+tsconfig.node.json
+  h_b8a5bec9fccfca 1-10
+src-tauri/capabilities/default.json
+  h_b8a5bec9fccfca 1-14
+src-tauri/src/main.rs
+  h_b8a5bec9fccfca 1-5
+src/components/SettingsView.tsx
+  h_b8a5bec9fccfca 1-602
+sources.sample.json
+  h_b8a5bec9fccfca 1-7
+src-tauri/icons/icon.svg
+  h_b8a5bec9fccfca 1-42
+src/components/DiscoverView.tsx
+  h_b8a5bec9fccfca 1-153
+src/store/useAppStore.ts
+  h_b8a5bec9fccfca 1-730
+src-tauri/src/lib.rs
+  h_b8a5bec9fccfca 1-266
+src-tauri/tauri.conf.json
+  h_b8a5bec9fccfca 1-52
+postcss.config.js
+  h_b8a5bec9fccfca 1-6
+src/services/api.ts
+  h_b8a5bec9fccfca 1-314
+src/mobile/views/MobileHistoryView.tsx
+  h_b8a5bec9fccfca 1-208
+src/main.tsx
+  h_b8a5bec9fccfca 1-10
+src-tauri/src/updater.rs
+  h_b8a5bec9fccfca 1-184
+src-tauri/icons/android/values/ic_launcher_background.xml
+  h_b8a5bec9fccfca 1-4
+scripts/MainActivity.kt
+  h_b8a5bec9fccfca 1-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "52dcb07aaa77d29a1e0812760e7ec920d2157a81",
+  "prompts": {},
+  "humans": {
+    "h_b8a5bec9fccfca": {
+      "author": "zhanghong <zhanghong@meibaokeji.com>"
+    }
+  }
+}
