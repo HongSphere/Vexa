@@ -1,0 +1,30 @@
+.gitignore
+  h_b8a5bec9fccfca 36
+package.json
+  h_b8a5bec9fccfca 4
+src-tauri/Cargo.lock
+  h_b8a5bec9fccfca 4515
+src-tauri/Cargo.toml
+  h_b8a5bec9fccfca 3
+src-tauri/tauri.conf.json
+  h_b8a5bec9fccfca 4
+src/components/SettingsView.tsx
+  h_b8a5bec9fccfca 462
+src/components/Sidebar.tsx
+  h_b8a5bec9fccfca 69
+src/mobile/views/MobileSettingsView.tsx
+  h_b8a5bec9fccfca 146,396,413,419
+src/services/api.ts
+  h_b8a5bec9fccfca 174,198
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "93fa8600b75cfbc33971a5b30de1d6998d58bc47",
+  "prompts": {},
+  "humans": {
+    "h_b8a5bec9fccfca": {
+      "author": "zhanghong <zhanghong@meibaokeji.com>"
+    }
+  }
+}
