@@ -1,0 +1,44 @@
+src/types/media.ts
+  h_b8a5bec9fccfca 164-165
+src/components/PlayerView.tsx
+  h_b8a5bec9fccfca 41,194-205,208
+src-tauri/tauri.conf.json
+  h_b8a5bec9fccfca 4
+src/mobile/views/MobilePlayerView.tsx
+  h_b8a5bec9fccfca 44,66-77,80
+src-tauri/src/proxy.rs
+  h_b8a5bec9fccfca 83-86,579-586,590,731-755,817-864
+src-tauri/Cargo.lock
+  h_b8a5bec9fccfca 4515
+src-tauri/src/lib.rs
+  h_b8a5bec9fccfca 145
+.github/workflows/release.yml
+  h_b8a5bec9fccfca 116
+src-tauri/Cargo.toml
+  h_b8a5bec9fccfca 3
+src/components/SettingsView.tsx
+  h_b8a5bec9fccfca 462
+scripts/MainActivity.kt
+  h_b8a5bec9fccfca 27
+src/mobile/views/MobileSettingsView.tsx
+  h_b8a5bec9fccfca 146,396,413,419
+src/services/api.ts
+  h_b8a5bec9fccfca 174,198
+src/components/Sidebar.tsx
+  h_b8a5bec9fccfca 69
+src-tauri/src/sources_config.rs
+  h_b8a5bec9fccfca 45-48
+package.json
+  h_b8a5bec9fccfca 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b61b5283997187ca1ae0de05368406bffcac615e",
+  "prompts": {},
+  "humans": {
+    "h_b8a5bec9fccfca": {
+      "author": "zhanghong <zhanghong@meibaokeji.com>"
+    }
+  }
+}
