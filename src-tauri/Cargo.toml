@@ -1,6 +1,6 @@
 [package]
 name = "vexa"
-version = "1.0.0"
+version = "1.0.1"
 description = "Vexa - 现代化多源多媒体播放与下载桌面客户端"
 authors = ["HongSphere"]
 edition = "2021"

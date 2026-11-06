@@ -1,7 +1,7 @@
 {
   "name": "vexa",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Vexa - 现代化多媒体播放与网页工作台 (Tauri v2 + Rust 原生引擎)",
   "type": "module",
   "scripts": {

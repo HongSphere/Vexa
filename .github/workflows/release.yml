@@ -138,7 +138,7 @@ jobs:
           echo "Found unsigned APK: $UNSIGNED_APK"
           CLEAN_VER="${GITHUB_REF_NAME#v}"
           if [ -z "$CLEAN_VER" ] || [ "$CLEAN_VER" = "$GITHUB_REF_NAME" ]; then
-            CLEAN_VER="1.0.0"
+            CLEAN_VER="1.0.1"
           fi
           APK_NAME="Vexa_${CLEAN_VER}.apk"
           $BUILD_TOOLS_DIR/apksigner sign --ks release.keystore --ks-pass pass:vexa123 --key-pass pass:vexa123 --out "$APK_NAME" "$UNSIGNED_APK"

@@ -66,7 +66,7 @@ export const Sidebar: React.FC = () => {
             <span className="text-base font-bold tracking-tight vx-title">
               Vexa
             </span>
-            <span className="text-[11px] font-mono vx-muted">v1.0.0</span>
+            <span className="text-[11px] font-mono vx-muted">v1.0.1</span>
           </div>
         </div>
 

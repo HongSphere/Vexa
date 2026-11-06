@@ -469,7 +469,7 @@ export const SettingsView: React.FC = () => {
               <div className="flex items-center gap-2.5">
                 <h2 className="text-base font-bold vx-title">Vexa 桌面客户端</h2>
                 <span className="px-2 py-0.5 rounded-md bg-sky-500/15 border border-sky-500/30 text-sky-500 text-xs font-mono font-semibold">
-                  v1.0.0
+                  v1.0.1
                 </span>
               </div>
               <p

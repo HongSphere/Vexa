@@ -234,7 +234,7 @@ async fn query_single_vod_api(
     let norm_full = full_kw.replace(' ', "").to_lowercase();
     let norm_base = base_kw.replace(' ', "").to_lowercase();
 
-    let mut best_item: Option<(&serde_json::Value, Vec<EpisodeItem>, i32)> = None;
+    let mut candidates: Vec<(&serde_json::Value, Vec<EpisodeItem>, i32)> = Vec::new();
 
     for item in list.iter().take(10) {
         let vod_name = item["vod_name"].as_str().unwrap_or("").trim();
@@ -262,12 +262,39 @@ async fn query_single_vod_api(
             score += 10;
         }
 
-        if best_item.as_ref().map_or(true, |(_, _, s)| score > *s) {
-            best_item = Some((item, episodes, score));
+        candidates.push((item, episodes, score));
+    }
+
+    candidates.sort_by(|a, b| b.2.cmp(&a.2));
+    let top_score = candidates.first().map(|c| c.2)?;
+
+    let probe_client = build_ipv4_client(3).ok()?;
+    let mut verified_choice: Option<(&serde_json::Value, Vec<EpisodeItem>, String)> = None;
+
+    for (item, episodes, score) in candidates.into_iter().take(3) {
+        if score + 10 < top_score {
+            break;
+        }
+        let ep_idx = preferred_ep
+            .filter(|&i| i >= 1 && i <= episodes.len())
+            .unwrap_or(1);
+        let Some(candidate_url) = episodes
+            .get(ep_idx - 1)
+            .or_else(|| episodes.first())
+            .map(|e| e.url.clone())
+        else {
+            continue;
+        };
+
+        if let Ok(r) = probe_client.get(&candidate_url).send().await {
+            if r.status().is_success() {
+                verified_choice = Some((item, episodes, candidate_url));
+                break;
+            }
         }
     }
 
-    let (chosen, episodes, _) = best_item?;
+    let (chosen, episodes, play_url) = verified_choice?;
     let matched_title = chosen["vod_name"]
         .as_str()
         .unwrap_or(&full_kw)
@@ -288,14 +315,6 @@ async fn query_single_vod_api(
         .or_else(|| chosen["type_name"].as_str())
         .unwrap_or(&source_name)
         .to_string();
-
-    let ep_idx = preferred_ep
-        .filter(|&i| i >= 1 && i <= episodes.len())
-        .unwrap_or(1);
-    let play_url = episodes
-        .get(ep_idx - 1)
-        .or_else(|| episodes.first())
-        .map(|e| e.url.clone())?;
 
     let m3u8_fmt = VideoFormat {
         format_id: format!("{}-1080p", source_id),

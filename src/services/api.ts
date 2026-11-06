@@ -189,7 +189,7 @@ export async function openExternalUrl(url: string): Promise<void> {
 }
 
 export async function getUpdaterState(): Promise<UpdateState> {
-  const currentVer = "1.0.0";
+  const currentVer = "1.0.1";
   if (!isTauri()) {
     return {
       checking: false,
@@ -217,7 +217,7 @@ export async function getUpdaterState(): Promise<UpdateState> {
 }
 
 export async function checkAppUpdate(_force = true): Promise<UpdateState> {
-  const currentVer = "1.0.0";
+  const currentVer = "1.0.1";
   if (!isTauri()) {
     return {
       checking: false,

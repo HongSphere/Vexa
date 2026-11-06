@@ -63,7 +63,7 @@ fn shared_client() -> &'static reqwest::Client {
             .cookie_store(true)
             .local_address(IpAddr::V4(Ipv4Addr::UNSPECIFIED))
             .danger_accept_invalid_certs(true)
-            .connect_timeout(std::time::Duration::from_secs(6))
+            .connect_timeout(std::time::Duration::from_secs(10))
             .pool_max_idle_per_host(16)
             .build()
             .expect("Failed to initialize proxy HTTP client")
@@ -84,11 +84,13 @@ pub struct WebQuery {
     pub mode: Option<String>,
     pub shield: Option<bool>,
     pub block: Option<String>,
+    pub ref_url: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct ApiProxyQuery {
     pub url: String,
+    pub ref_url: Option<String>,
 }
 
 pub async fn start_local_stream_proxy() -> u16 {
@@ -209,16 +211,17 @@ async fn proxy_api_handler(
             .into_response();
     }
 
-    let target_url = match query {
+    let (target_url, custom_ref) = match query {
         Some(Query(q)) => {
             let u = q.url.trim();
-            if u.starts_with("//") {
+            let resolved = if u.starts_with("//") {
                 format!("https:{}", u)
             } else {
                 u.to_string()
-            }
+            };
+            (resolved, q.ref_url)
         }
-        None => String::new(),
+        None => (String::new(), None),
     };
 
     if !target_url.starts_with("http://") && !target_url.starts_with("https://") {
@@ -228,7 +231,14 @@ async fn proxy_api_handler(
     let client = shared_client();
     let mut req = client.request(method, &target_url);
 
-    if let Ok(parsed) = reqwest::Url::parse(&target_url) {
+    if let Some(ref r_url) = custom_ref {
+        if let Ok(parsed_ref) = reqwest::Url::parse(r_url) {
+            if let Some(host) = parsed_ref.host_str() {
+                req = req.header("Origin", format!("{}://{}", parsed_ref.scheme(), host));
+            }
+        }
+        req = req.header("Referer", r_url);
+    } else if let Ok(parsed) = reqwest::Url::parse(&target_url) {
         let upstream = get_active_upstream();
         if !upstream.is_empty() {
             req = req.header("Origin", &upstream);
@@ -457,6 +467,36 @@ async fn proxy_m3u8_handler(Query(query): Query<StreamQuery>) -> impl IntoRespon
         Err(_) => None,
     };
 
+    let mut dir_counts: HashMap<String, usize> = HashMap::new();
+    let mut total_ts_segments: usize = 0;
+    for line in content.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        let abs = if t.starts_with("http://") || t.starts_with("https://") {
+            t.to_string()
+        } else if t.starts_with('/') {
+            format!("{}{}", origin, t)
+        } else {
+            format!("{}{}", base_url, t)
+        };
+        if !abs.contains(".m3u8") {
+            total_ts_segments += 1;
+            let dir = abs.rfind('/').map(|i| &abs[..i]).unwrap_or("").to_string();
+            *dir_counts.entry(dir).or_insert(0) += 1;
+        }
+    }
+
+    let dominant_dir = if total_ts_segments >= 10 {
+        dir_counts
+            .into_iter()
+            .max_by_key(|(_, c)| *c)
+            .and_then(|(d, c)| if c * 10 >= total_ts_segments * 6 { Some(d) } else { None })
+    } else {
+        None
+    };
+
     let mut out_lines = Vec::new();
     let mut pending_extinf: Option<String> = None;
 
@@ -511,10 +551,6 @@ async fn proxy_m3u8_handler(Query(query): Query<StreamQuery>) -> impl IntoRespon
                 continue;
             }
 
-            if let Some(extinf) = pending_extinf.take() {
-                out_lines.push(extinf);
-            }
-
             let abs_url = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
                 trimmed.to_string()
             } else if trimmed.starts_with('/') {
@@ -523,6 +559,20 @@ async fn proxy_m3u8_handler(Query(query): Query<StreamQuery>) -> impl IntoRespon
                 format!("{}{}", base_url, trimmed)
             };
             let is_sub_m3u8 = abs_url.contains(".m3u8");
+            if !is_sub_m3u8 {
+                if let Some(ref dom) = dominant_dir {
+                    let seg_dir = abs_url.rfind('/').map(|i| &abs_url[..i]).unwrap_or("");
+                    if seg_dir != dom.as_str() {
+                        pending_extinf = None;
+                        continue;
+                    }
+                }
+            }
+
+            if let Some(extinf) = pending_extinf.take() {
+                out_lines.push(extinf);
+            }
+
             let route = if is_sub_m3u8 { "m3u8" } else { "stream" };
             let proxied = format!(
                 "http://127.0.0.1:{}/{}?url={}&headers={}",
@@ -585,62 +635,121 @@ async fn proxy_web_handler(
         "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
     };
 
-    let mut req = client
-        .get(raw_url)
-        .header("User-Agent", upstream_ua)
-        .header(
-            "Accept",
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        )
-        .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
+    let is_shield = query.shield.unwrap_or(false);
+    let mut current_url = raw_url.to_string();
+    let mut current_referer = query.ref_url.clone();
+    let max_hops = if is_shield { 4 } else { 1 };
+    let iframe_unwrap_re = regex::Regex::new(r#"(?i)<iframe[^>]*\ssrc=["']([^"']+)["']"#).ok();
 
-    if let Ok(parsed) = reqwest::Url::parse(raw_url) {
-        if let Some(host) = parsed.host_str() {
-            req = req.header("Referer", format!("{}://{}/", parsed.scheme(), host));
-            req = req.header("Origin", format!("{}://{}", parsed.scheme(), host));
-        }
-    }
+    let mut status = StatusCode::OK;
+    let mut final_url = current_url.clone();
+    let mut content_type = "text/html; charset=utf-8".to_string();
+    let mut upstream_headers = HeaderMap::new();
+    let mut html_bytes = axum::body::Bytes::new();
 
-    if let Some(cookie_val) = req_headers.get(header::COOKIE) {
-        if let Ok(c_str) = cookie_val.to_str() {
-            req = req.header(header::COOKIE, c_str);
-        }
-    }
-
-    let resp = match req.send().await {
-        Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-                format!("Failed to load page: {}", e),
+    for _hop in 0..max_hops {
+        let mut req = client
+            .get(&current_url)
+            .header("User-Agent", upstream_ua)
+            .header(
+                "Accept",
+                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             )
-                .into_response();
-        }
-    };
+            .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
 
-    let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::OK);
-    let final_url = resp.url().to_string();
+        if let Some(ref ref_u) = current_referer {
+            if let Ok(parsed_ref) = reqwest::Url::parse(ref_u) {
+                if let Some(host) = parsed_ref.host_str() {
+                    req = req.header("Origin", format!("{}://{}", parsed_ref.scheme(), host));
+                }
+            }
+            req = req.header("Referer", ref_u);
+        } else if let Ok(parsed) = reqwest::Url::parse(&current_url) {
+            if let Some(host) = parsed.host_str() {
+                req = req.header("Referer", format!("{}://{}/", parsed.scheme(), host));
+                req = req.header("Origin", format!("{}://{}", parsed.scheme(), host));
+            }
+        }
+
+        if let Some(cookie_val) = req_headers.get(header::COOKIE) {
+            if let Ok(c_str) = cookie_val.to_str() {
+                req = req.header(header::COOKIE, c_str);
+            }
+        }
+
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                    format!("Failed to load page: {}", e),
+                )
+                    .into_response();
+            }
+        };
+
+        status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::OK);
+        final_url = resp.url().to_string();
+        content_type = resp
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("text/html; charset=utf-8")
+            .to_string();
+        upstream_headers = resp.headers().clone();
+
+        html_bytes = match resp.bytes().await {
+            Ok(b) => b,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                    format!("Failed to read page body: {}", e),
+                )
+                    .into_response();
+            }
+        };
+
+        if !is_shield || !content_type.contains("text/html") || html_bytes.len() >= 4000 {
+            break;
+        }
+
+        let peek_html = String::from_utf8_lossy(&html_bytes);
+        if peek_html.contains("Artplayer")
+            || peek_html.contains("DPlayer")
+            || peek_html.contains("<video")
+            || peek_html.contains("new Player")
+        {
+            break;
+        }
+
+        let mut next_hop_url: Option<String> = None;
+        if let Some(ref re) = iframe_unwrap_re {
+            if let Some(caps) = re.captures(&peek_html) {
+                let raw_src = caps[1].trim();
+                if !raw_src.is_empty() && !raw_src.starts_with("javascript:") && !raw_src.starts_with("about:") {
+                    if let Ok(base) = reqwest::Url::parse(&final_url) {
+                        if let Ok(joined) = base.join(raw_src) {
+                            let s = joined.to_string();
+                            if s != current_url && s != final_url {
+                                next_hop_url = Some(s);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(next_u) = next_hop_url {
+            current_referer = Some(final_url.clone());
+            current_url = next_u;
+        } else {
+            break;
+        }
+    }
+
     set_active_upstream(&final_url);
-    let content_type = resp
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("text/html; charset=utf-8")
-        .to_string();
-    let upstream_headers = resp.headers().clone();
-
-    let html_bytes = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-                format!("Failed to read page body: {}", e),
-            )
-                .into_response();
-        }
-    };
 
     if !content_type.contains("text/html") {
         let resp_builder = Response::builder()
@@ -747,6 +856,10 @@ async fn proxy_web_handler(
         clean_html = re.replace_all(&clean_html, "").to_string();
     }
 
+    if let Ok(re) = regex::Regex::new(r#"(?i)<script[^>]*\su=["'][0-9a-fA-F]{16,}["'][^>]*>\s*</script>"#) {
+        clean_html = re.replace_all(&clean_html, "").to_string();
+    }
+
     if let Ok(re) = regex::Regex::new(r#"(?is)<script[^>]*>(?:(?!</script>).)*?(?:adbyunion|1607593455|trafficmanager|cJump|autoJump|touchJump)(?:(?!</script>).)*?</script>"#) {
         clean_html = re.replace_all(&clean_html, "").to_string();
     }
@@ -759,7 +872,36 @@ async fn proxy_web_handler(
         clean_html = re.replace_all(&clean_html, "").to_string();
     }
 
-    if let Ok(re) = regex::Regex::new(r#"(?i)(<iframe[^>]*\ssrc=["'])(https?://[^"']+)(["'])"#) {
+    if is_shield {
+        if let Ok(re) = regex::Regex::new(r#"(?i)(<iframe[^>]*\ssrc=["'])([^"']+)(["'])"#) {
+            clean_html = re.replace_all(&clean_html, |caps: &regex::Captures| {
+                let prefix = &caps[1];
+                let raw_src = caps[2].trim();
+                let suffix = &caps[3];
+                if raw_src.is_empty()
+                    || raw_src.starts_with("javascript:")
+                    || raw_src.starts_with("about:")
+                    || raw_src.contains("127.0.0.1")
+                    || raw_src.contains("localhost")
+                {
+                    format!("{}{}{}", prefix, raw_src, suffix)
+                } else {
+                    let abs_src = reqwest::Url::parse(&final_url)
+                        .and_then(|b| b.join(raw_src))
+                        .map(|u| u.to_string())
+                        .unwrap_or_else(|_| raw_src.to_string());
+                    let proxied = format!(
+                        "http://127.0.0.1:{}/web?url={}&ref_url={}&ua={}&shield=true",
+                        port,
+                        urlencoding::encode(&abs_src),
+                        urlencoding::encode(&final_url),
+                        urlencoding::encode(if is_desktop_ua { "desktop" } else { "mobile" })
+                    );
+                    format!("{}{}{}", prefix, proxied, suffix)
+                }
+            }).to_string();
+        }
+    } else if let Ok(re) = regex::Regex::new(r#"(?i)(<iframe[^>]*\ssrc=["'])(https?://[^"']+)(["'])"#) {
         clean_html = re.replace_all(&clean_html, |caps: &regex::Captures| {
             let prefix = &caps[1];
             let raw_src = &caps[2];
@@ -826,6 +968,7 @@ async fn proxy_web_handler(
 [id*="open-app"], [id*="openApp"], [id*="download-app"], [id*="app-banner"], [id*="callup"],
 [data-e2e*="open-app"], [data-act*="open-app"],
 ins,
+#player_pause,
 [id^="show-"],
 [class*="webInterstitial"],
 [class*="web-interstitial"],
@@ -1116,10 +1259,12 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
     }}
   }} catch(e) {{}}
 
-  function toFullApiUrl(u) {{
-    if (!u || typeof u !== 'string') return '';
-    if (u.startsWith('//')) return 'https:' + u;
-    return u;
+  var isShieldMode = {is_shield};
+
+  function isM3u8Resource(u) {{
+    if (!u || typeof u !== 'string') return false;
+    var clean = u.split('?')[0].split('#')[0].toLowerCase();
+    return clean.endsWith('.m3u8');
   }}
 
   function isStaticMediaResource(u) {{
@@ -1132,6 +1277,29 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
            clean.endsWith('.mp4') || clean.endsWith('.m3u8') || clean.endsWith('.ts');
   }}
 
+  function toFullApiUrl(u) {{
+    if (!u || typeof u !== 'string') return '';
+    if (u.startsWith('//')) return 'https:' + u;
+    if (isShieldMode) {{
+      if (u.startsWith('http://') || u.startsWith('https://') || u.startsWith('data:') || u.startsWith('blob:') || u.startsWith('javascript:') || u.startsWith('#')) return u;
+      if (!u.startsWith('/') && (!isStaticMediaResource(u) || isM3u8Resource(u)) && upstreamBase) {{
+        try {{
+          return new URL(u, upstreamBase).href;
+        }} catch(e) {{}}
+      }}
+    }}
+    return u;
+  }}
+
+  function shouldRouteToM3u8Proxy(u) {{
+    if (!isShieldMode || !u || typeof u !== 'string') return false;
+    if (u.indexOf('127.0.0.1') !== -1 || u.indexOf('localhost') !== -1) return false;
+    if (u.startsWith('http://') || u.startsWith('https://')) {{
+      return isM3u8Resource(u);
+    }}
+    return false;
+  }}
+
   function shouldRouteToApiProxy(u) {{
     if (!u || typeof u !== 'string') return false;
     if (u.indexOf('127.0.0.1') !== -1 || u.indexOf('localhost') !== -1) return false;
@@ -1141,15 +1309,21 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
     return false;
   }}
 
-  // Safe fetch hook to route relative API calls and cross-origin endpoints to local proxy
   try {{
     var origFetch = window.fetch;
     if (origFetch) {{
       window.fetch = function(input, init) {{
         var rawUrl = (typeof input === 'string') ? input : (input && input.url ? input.url : '');
         var urlStr = toFullApiUrl(rawUrl);
-        if (shouldRouteToApiProxy(urlStr)) {{
-          var proxied = 'http://127.0.0.1:{port}/api_proxy?url=' + encodeURIComponent(urlStr);
+        if (shouldRouteToM3u8Proxy(urlStr)) {{
+          var m3u8Proxied = 'http://127.0.0.1:{port}/m3u8?url=' + encodeURIComponent(urlStr);
+          if (typeof input === 'string') {{
+            input = m3u8Proxied;
+          }} else {{
+            input = new Request(m3u8Proxied, input);
+          }}
+        }} else if (shouldRouteToApiProxy(urlStr)) {{
+          var proxied = 'http://127.0.0.1:{port}/api_proxy?url=' + encodeURIComponent(urlStr) + (isShieldMode && upstreamBase ? '&ref_url=' + encodeURIComponent(upstreamBase) : '');
           if (typeof input === 'string') {{
             input = proxied;
           }} else {{
@@ -1173,15 +1347,16 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
     }}
   }} catch(e) {{}}
 
-  // Safe XHR hook for relative and cross-origin API endpoints
   try {{
     var origXhrOpen = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function(method, url) {{
       var newUrl = url;
       if (typeof url === 'string') {{
         var full = toFullApiUrl(url);
-        if (shouldRouteToApiProxy(full)) {{
-          newUrl = 'http://127.0.0.1:{port}/api_proxy?url=' + encodeURIComponent(full);
+        if (shouldRouteToM3u8Proxy(full)) {{
+          newUrl = 'http://127.0.0.1:{port}/m3u8?url=' + encodeURIComponent(full);
+        }} else if (shouldRouteToApiProxy(full)) {{
+          newUrl = 'http://127.0.0.1:{port}/api_proxy?url=' + encodeURIComponent(full) + (isShieldMode && upstreamBase ? '&ref_url=' + encodeURIComponent(upstreamBase) : '');
         }} else if (url.startsWith('/') && !url.startsWith('//')) {{
           newUrl = 'http://127.0.0.1:{port}' + url;
         }} else if (url.startsWith('//')) {{

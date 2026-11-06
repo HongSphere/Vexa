@@ -143,7 +143,7 @@ export const MobileSettingsView: React.FC = () => {
       const res = await checkAppUpdate(true);
       setUpdateState(res);
       showToast(res.message || "检测完成");
-      if (res.version && res.version !== "1.0.0") {
+      if (res.version && res.version !== "1.0.1") {
         setShowUpdateModal(true);
       }
     } catch (e: any) {
@@ -393,7 +393,7 @@ export const MobileSettingsView: React.FC = () => {
             <div>
               <div className="text-xs font-bold vx-title">Vexa 跨平台流媒体工作台</div>
               <div className="text-[10px] font-mono vx-muted mt-0.5">
-                版本 v1.0.0 (Tauri v2 + Rust)
+                版本 v1.0.1 (Tauri v2 + Rust)
               </div>
             </div>
             <button
@@ -410,13 +410,13 @@ export const MobileSettingsView: React.FC = () => {
             <div className={`text-[11px] px-2.5 py-1.5 rounded-xl flex items-center gap-1.5 ${
               updateState.error
                 ? "bg-rose-500/10 text-rose-500"
-                : updateState.version && updateState.version !== "1.0.0"
+                : updateState.version && updateState.version !== "1.0.1"
                 ? "bg-sky-500/10 text-sky-500 font-bold"
                 : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
             }`}>
               {updateState.error ? (
                 <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-              ) : updateState.version && updateState.version !== "1.0.0" ? (
+              ) : updateState.version && updateState.version !== "1.0.1" ? (
                 <DownloadCloud className="w-3.5 h-3.5 shrink-0" />
               ) : (
                 <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />

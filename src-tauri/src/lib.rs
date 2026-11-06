@@ -158,7 +158,7 @@ fn get_sources_config(app: AppHandle) -> sources_config::SourcesConfig {
 async fn commands_check_latest_github_release() -> Result<serde_json::Value, String> {
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
-        .user_agent("Vexa-App/1.0.0")
+        .user_agent("Vexa-App/1.0.1")
         .build()
         .map_err(|e| e.to_string())?;
 
