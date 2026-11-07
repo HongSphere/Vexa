@@ -388,7 +388,10 @@ async fn fetch_aggregated_sources(
 
 fn canonicalize_for_parser(raw_url: &str) -> String {
     let trimmed = raw_url.trim();
-    if trimmed.contains("/x/m/play") || (trimmed.contains("//m.") && trimmed.contains("cid=")) {
+    if trimmed.contains("/x/m/play")
+        || trimmed.contains("/cover/m/")
+        || (trimmed.contains("//m.") && (trimmed.contains("cid=") || trimmed.contains("vid=")))
+    {
         if let Ok(parsed) = reqwest::Url::parse(trimmed) {
             if let Some(host) = parsed.host_str() {
                 let desktop_host = host.strip_prefix("m.").unwrap_or(host);
@@ -401,6 +404,23 @@ fn canonicalize_for_parser(raw_url: &str) -> String {
                         vid_val = Some(v.into_owned());
                     }
                 }
+                if cid_val.is_none() {
+                    if let Ok(re) = Regex::new(r"/cover/(?:m/)?([a-zA-Z0-9]+)") {
+                        if let Some(cap) = re.captures(parsed.path()) {
+                            cid_val = cap.get(1).map(|m| m.as_str().to_string());
+                        }
+                    }
+                }
+                if vid_val.is_none() {
+                    if let Ok(re) = Regex::new(r"/([a-zA-Z0-9]{11})\.html") {
+                        if let Some(cap) = re.captures(parsed.path()) {
+                            let cand = cap[1].to_string();
+                            if Some(&cand) != cid_val.as_ref() {
+                                vid_val = Some(cand);
+                            }
+                        }
+                    }
+                }
                 if let Some(c) = cid_val {
                     if let Some(v) = vid_val {
                         return format!("{}://{}/x/cover/{}/{}.html", parsed.scheme(), desktop_host, c, v);
@@ -408,21 +428,181 @@ fn canonicalize_for_parser(raw_url: &str) -> String {
                         return format!("{}://{}/x/cover/{}.html", parsed.scheme(), desktop_host, c);
                     }
                 }
+                if let Some(v) = vid_val {
+                    return format!("{}://{}/x/page/{}.html", parsed.scheme(), desktop_host, v);
+                }
             }
         }
     }
-    if trimmed.contains("/alipay_video/id_") {
-        return trimmed
+    if trimmed.contains("/alipay_video/id_") || trimmed.contains("/mid_video/id_") || (trimmed.contains("//m.") && trimmed.contains("/video/id_")) {
+        let base_part = trimmed.split('?').next().unwrap_or(trimmed);
+        return base_part
             .replace("//m.", "//v.")
-            .replace("/alipay_video/", "/v_show/");
+            .replace("/alipay_video/", "/v_show/")
+            .replace("/mid_video/", "/v_show/")
+            .replace("/video/", "/v_show/");
+    }
+    if trimmed.contains("//m.v.") {
+        return trimmed.replace("//m.v.", "//v.");
     }
     if trimmed.contains("//m.") {
-        return trimmed.replace("//m.", "//www.");
+        let replaced = trimmed.replace("//m.", "//www.");
+        if !replaced.contains("?p=") && !replaced.contains("&p=") && !replaced.contains("cid=") && !replaced.contains("vid=") {
+            if let Some(base_no_q) = replaced.split('?').next() {
+                return base_no_q.to_string();
+            }
+        }
+        return replaced;
     }
     trimmed.to_string()
 }
 
-fn build_parse_sources(official_url: &str, title: &str) -> Vec<MediaSource> {
+async fn extract_official_episodes(raw_url: &str) -> (Vec<EpisodeItem>, Option<usize>) {
+    let trimmed = raw_url.trim();
+    if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
+        return (vec![], None);
+    }
+    let normalized = canonicalize_for_parser(trimmed);
+    let cid_re = Regex::new(r"(?:/cover/(?:m/)?|[?&]cid=)([a-zA-Z0-9]+)").ok();
+    let vid_re = Regex::new(r"[?&]vid=([a-zA-Z0-9]+)|/([a-zA-Z0-9]{11})\.html").ok();
+    let cid = cid_re
+        .as_ref()
+        .and_then(|re| re.captures(trimmed).or_else(|| re.captures(&normalized)))
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().to_string());
+    let vid = vid_re
+        .as_ref()
+        .and_then(|re| re.captures(trimmed).or_else(|| re.captures(&normalized)))
+        .and_then(|c| c.get(1).or_else(|| c.get(2)))
+        .map(|m| m.as_str().to_string());
+
+    if let Some(ref c) = cid {
+        if let Ok(parsed) = reqwest::Url::parse(&normalized) {
+            if let Some(host) = parsed.host_str() {
+                let desktop_host = host.strip_prefix("m.").unwrap_or(host);
+                let api = format!("{}cid={}", dec(QQ_API), c);
+                if let Ok(client) = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(3))
+                    .build()
+                {
+                    if let Ok(resp) = client.get(&api).header("User-Agent", "Mozilla/5.0").send().await {
+                        if let Ok(json) = resp.json::<serde_json::Value>().await {
+                            if let Some(arr) = json.pointer("/c/video_ids").and_then(|v| v.as_array()) {
+                                let mut eps = Vec::new();
+                                let mut detected_idx = None;
+                                for (idx, item) in arr.iter().enumerate() {
+                                    if let Some(v_str) = item.as_str() {
+                                        if !v_str.is_empty() {
+                                            if vid.as_deref() == Some(v_str) {
+                                                detected_idx = Some(idx + 1);
+                                            }
+                                            eps.push(EpisodeItem {
+                                                index: idx + 1,
+                                                id: v_str.to_string(),
+                                                title: format!("第{:02}集", idx + 1),
+                                                duration: 0,
+                                                url: format!("{}://{}/x/cover/{}/{}.html", parsed.scheme(), desktop_host, c, v_str),
+                                                cid: None,
+                                            });
+                                        }
+                                    }
+                                }
+                                if !eps.is_empty() {
+                                    return (eps, detected_idx);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let ep_id = Regex::new(r"ep(\d+)")
+        .ok()
+        .and_then(|r| r.captures(&normalized))
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().to_string());
+    let ss_id = Regex::new(r"ss(\d+)")
+        .ok()
+        .and_then(|r| r.captures(&normalized))
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().to_string());
+
+    if ep_id.is_some() || ss_id.is_some() {
+        let pgc_query = if let Some(ref ep) = ep_id {
+            format!("ep_id={}", ep)
+        } else if let Some(ref ss) = ss_id {
+            format!("season_id={}", ss)
+        } else {
+            String::new()
+        };
+        if !pgc_query.is_empty() {
+            if let Ok(client) = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(3))
+                .build()
+            {
+                let pgc_api = format!("{}{}", dec(BILI_PGC), pgc_query);
+                if let Ok(resp) = client
+                    .get(&pgc_api)
+                    .header("Referer", &dec(BILI_HOST))
+                    .send()
+                    .await
+                {
+                    if let Ok(json) = resp.json::<serde_json::Value>().await {
+                        if let Some(arr) = json["result"]["episodes"].as_array() {
+                            let mut eps = Vec::new();
+                            let mut detected_idx = None;
+                            for (idx, item) in arr.iter().enumerate() {
+                                if let Some(id_num) = item["id"].as_i64() {
+                                    let id_str = id_num.to_string();
+                                    if ep_id.as_deref() == Some(id_str.as_str()) {
+                                        detected_idx = Some(idx + 1);
+                                    }
+                                    let ep_title = item["title"]
+                                        .as_str()
+                                        .map(|t| {
+                                            if t.chars().all(|ch| ch.is_ascii_digit()) {
+                                                format!("第{}话", t)
+                                            } else {
+                                                t.to_string()
+                                            }
+                                        })
+                                        .unwrap_or_else(|| format!("第{:02}话", idx + 1));
+                                    let ep_link = item["link"]
+                                        .as_str()
+                                        .filter(|l| l.starts_with("http"))
+                                        .map(|l| l.to_string())
+                                        .unwrap_or_else(|| format!("{}bangumi/play/ep{}", dec(BILI_HOST), id_str));
+                                    eps.push(EpisodeItem {
+                                        index: idx + 1,
+                                        id: id_str,
+                                        title: ep_title,
+                                        duration: 0,
+                                        url: ep_link,
+                                        cid: item["cid"].as_u64(),
+                                    });
+                                }
+                            }
+                            if !eps.is_empty() {
+                                return (eps, detected_idx);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    (vec![], None)
+}
+
+fn build_parse_sources(
+    official_url: &str,
+    title: &str,
+    official_episodes: &[EpisodeItem],
+    preferred_ep: Option<usize>,
+) -> Vec<MediaSource> {
     if !official_url.starts_with("http://") && !official_url.starts_with("https://") {
         return vec![];
     }
@@ -430,15 +610,32 @@ fn build_parse_sources(official_url: &str, title: &str) -> Vec<MediaSource> {
     let lines = crate::sources_config::get_active_parse_lines();
     lines
         .into_iter()
-        .map(|line| MediaSource {
-            source_id: line.id,
-            source_name: line.name,
-            matched_title: title.to_string(),
-            remarks: "解析专线".to_string(),
-            source_type: "jx_iframe".to_string(),
-            play_url: format!("{}{}", line.url_prefix, normalized_url),
-            episodes: vec![],
-            formats: vec![],
+        .map(|line| {
+            let line_eps: Vec<EpisodeItem> = official_episodes
+                .iter()
+                .map(|ep| EpisodeItem {
+                    index: ep.index,
+                    id: ep.id.clone(),
+                    title: ep.title.clone(),
+                    duration: ep.duration,
+                    url: format!("{}{}", line.url_prefix, canonicalize_for_parser(&ep.url)),
+                    cid: ep.cid.clone(),
+                })
+                .collect();
+            let chosen_play_url = preferred_ep
+                .and_then(|idx| line_eps.iter().find(|e| e.index == idx).or_else(|| line_eps.get(idx.saturating_sub(1))))
+                .map(|e| e.url.clone())
+                .unwrap_or_else(|| format!("{}{}", line.url_prefix, normalized_url));
+            MediaSource {
+                source_id: line.id,
+                source_name: line.name,
+                matched_title: title.to_string(),
+                remarks: "解析专线".to_string(),
+                source_type: "jx_iframe".to_string(),
+                play_url: chosen_play_url,
+                episodes: line_eps,
+                formats: vec![],
+            }
         })
         .collect()
 }
@@ -817,13 +1014,15 @@ pub async fn parse_url_entry(
         extracted_kw = extract_clean_vod_query_and_episode(trimmed);
     }
 
+    let (official_episodes, official_ep_idx) = extract_official_episodes(trimmed).await;
+
     let (base_kw, full_kw, preferred_ep) = match extracted_kw {
-        Some((b, f, ep)) => (b, f, ep),
+        Some((b, f, ep)) => (b, f, ep.or(official_ep_idx)),
         None if native_meta.is_none() && platform != dec(PLAT_FEED) => {
             let (b, f) = default_platform_showcase_title(&platform);
-            (b.to_string(), f.to_string(), Some(1))
+            (b.to_string(), f.to_string(), official_ep_idx.or(Some(1)))
         }
-        None => (String::new(), String::new(), None),
+        None => (String::new(), String::new(), official_ep_idx),
     };
 
     let (mut aggregated_sources, mut vod_meta) = if !base_kw.is_empty() {
@@ -856,7 +1055,12 @@ pub async fn parse_url_entry(
         let mut all_sources = Vec::new();
         all_sources.push(official_src);
         all_sources.append(&mut aggregated_sources);
-        let mut jx_lines = build_parse_sources(trimmed, &meta.title);
+        let mut jx_lines = build_parse_sources(
+            trimmed,
+            &meta.title,
+            &meta.episodes,
+            Some(meta.current_episode_index),
+        );
         all_sources.append(&mut jx_lines);
         meta.sources = all_sources;
         meta.active_source_id = "official-native".to_string();
@@ -884,13 +1088,17 @@ pub async fn parse_url_entry(
         })
     } else {
         (
-            page_title_hint.unwrap_or("视频播放").to_string(),
+            if !title_source.is_empty() && !is_generic_platform_title(&title_source) {
+                title_source.clone()
+            } else {
+                page_title_hint.unwrap_or("视频播放").to_string()
+            },
             String::new(),
             platform_name.to_string(),
         )
     };
 
-    let mut jx_lines = build_parse_sources(trimmed, &vod_title);
+    let mut jx_lines = build_parse_sources(trimmed, &vod_title, &official_episodes, preferred_ep);
 
     if !aggregated_sources.is_empty() || !jx_lines.is_empty() {
         let ep_idx = preferred_ep.unwrap_or(1);
@@ -906,7 +1114,7 @@ pub async fn parse_url_entry(
                 remarks: official_remarks,
                 source_type: official_type,
                 play_url: official_play_url,
-                episodes: vec![],
+                episodes: official_episodes.clone(),
                 formats: vec![],
             });
         }
@@ -926,7 +1134,10 @@ pub async fn parse_url_entry(
         };
 
         let primary_m3u8 = all_sources.iter().find(|s| s.source_type == "m3u8");
-        let episodes = primary_m3u8.map(|s| s.episodes.clone()).unwrap_or_default();
+        let episodes = primary_m3u8
+            .map(|s| s.episodes.clone())
+            .filter(|e| !e.is_empty())
+            .unwrap_or_else(|| official_episodes.clone());
 
         let fmt = primary_m3u8
             .and_then(|s| s.formats.first().cloned())

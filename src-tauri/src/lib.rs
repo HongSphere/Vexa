@@ -147,6 +147,7 @@ fn commands_open_browser(url: String) -> Result<(), String> {
 #[tauri::command]
 fn commands_exit_app(app: AppHandle) {
     app.exit(0);
+    #[cfg(not(target_os = "android"))]
     std::process::exit(0);
 }
 

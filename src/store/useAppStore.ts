@@ -662,11 +662,29 @@ export const useAppStore = create<AppState>((set, get) => ({
           showToast(`已切换至「${target.sourceName}」`);
         });
     } else {
-      // jx_iframe parse line
+      const epCount = target.episodes?.length || 0;
+      const epIdx =
+        currentVideo.currentEpisodeIndex >= 1 &&
+        (epCount === 0 || currentVideo.currentEpisodeIndex <= epCount)
+          ? currentVideo.currentEpisodeIndex
+          : 1;
+      const matchedEp =
+        target.episodes?.find((e) => e.index === epIdx) ||
+        target.episodes?.[epIdx - 1] ||
+        null;
+      const nextPlayUrl = matchedEp ? matchedEp.url : target.playUrl;
+      const updatedSources = (currentVideo.sources || []).map((s) =>
+        s.sourceId === target.sourceId ? { ...s, playUrl: nextPlayUrl } : s
+      );
+
       set({
         currentVideo: {
           ...currentVideo,
           activeSourceId: target.sourceId,
+          sources: updatedSources,
+          episodes:
+            epCount > 0 ? target.episodes! : currentVideo.episodes || [],
+          currentEpisodeIndex: epIdx,
         },
       });
       showToast(`已切换至「${target.sourceName}」`);
@@ -674,10 +692,70 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   switchEpisode: async (ep) => {
-    const { currentVideo, selectedFormat, loadAndPlayUrl, showToast } = get();
+    const {
+      currentVideo,
+      selectedFormat,
+      loadAndPlayUrl,
+      showToast,
+      sourcesConfig,
+    } = get();
     if (!currentVideo) return;
 
-    if (ep.url.includes(".m3u8") || ep.url.includes(".mp4")) {
+    const currentActive = currentVideo.sources?.find(
+      (s) => s.sourceId === currentVideo.activeSourceId
+    );
+
+    if (currentActive?.sourceType === "jx_iframe") {
+      const jxEp =
+        currentActive.episodes?.find((e) => e.index === ep.index) ||
+        currentActive.episodes?.[ep.index - 1] ||
+        null;
+      let nextPlayUrl = jxEp?.url || "";
+      if (
+        !nextPlayUrl &&
+        ep.url.startsWith("http") &&
+        !ep.url.includes(".m3u8") &&
+        !ep.url.includes(".mp4")
+      ) {
+        const lineCfg = sourcesConfig.parseLines?.find(
+          (l) =>
+            l.id === currentActive.sourceId ||
+            (l.urlPrefix && currentActive.playUrl?.startsWith(l.urlPrefix))
+        );
+        const prefix = lineCfg?.urlPrefix || "";
+        nextPlayUrl =
+          prefix && !ep.url.startsWith(prefix) ? `${prefix}${ep.url}` : ep.url;
+      }
+
+      if (nextPlayUrl) {
+        const updatedSources = (currentVideo.sources || []).map((s) =>
+          s.sourceId === currentActive.sourceId
+            ? { ...s, playUrl: nextPlayUrl }
+            : s
+        );
+        set({
+          currentVideo: {
+            ...currentVideo,
+            activeSourceId: currentActive.sourceId,
+            sources: updatedSources,
+            currentEpisodeIndex: ep.index,
+          },
+          initialSeekTime: 0,
+        });
+        showToast(`正在播放：${ep.title}`);
+        return;
+      }
+    }
+
+    const m3u8Ep =
+      currentActive?.sourceType === "m3u8"
+        ? currentActive.episodes?.find((e) => e.index === ep.index) ||
+          currentActive.episodes?.[ep.index - 1] ||
+          null
+        : null;
+    const candidateUrl = m3u8Ep?.url || ep.url;
+
+    if (candidateUrl.includes(".m3u8") || candidateUrl.includes(".mp4")) {
       const nextFormat: VideoFormat = {
         ...(selectedFormat || {
           formatId: "m3u8-1080p",
@@ -691,33 +769,20 @@ export const useAppStore = create<AppState>((set, get) => ({
           isHls: true,
           headers: {},
         }),
-        videoUrl: ep.url,
-        isHls: ep.url.includes(".m3u8"),
+        videoUrl: candidateUrl,
+        isHls: candidateUrl.includes(".m3u8"),
         isDash: false,
       };
 
-      // 若当前处于解析iframe或官方原网页，切换选集时自动切入聚合直链原生播放器
-      let nextActiveSourceId = currentVideo.activeSourceId;
-      const currentActive = currentVideo.sources?.find(
-        (s) => s.sourceId === currentVideo.activeSourceId
-      );
-      if (
-        !currentActive ||
-        currentActive.sourceType === "jx_iframe" ||
-        currentActive.sourceType === "official_web"
-      ) {
-        const m3u8Source = currentVideo.sources?.find(
-          (s) => s.sourceType === "m3u8"
-        );
-        if (m3u8Source) {
-          nextActiveSourceId = m3u8Source.sourceId;
-        }
-      }
+      const preservedSourceId =
+        currentActive?.sourceType === "m3u8"
+          ? currentActive.sourceId
+          : currentVideo.activeSourceId;
 
       set({
         currentVideo: {
           ...currentVideo,
-          activeSourceId: nextActiveSourceId,
+          activeSourceId: preservedSourceId,
           currentEpisodeIndex: ep.index,
         },
         selectedFormat: nextFormat,
@@ -727,6 +792,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       return;
     }
 
+    const preferredSourceId = currentVideo.activeSourceId;
     await loadAndPlayUrl(ep.url, 0);
+    const afterVideo = get().currentVideo;
+    if (
+      afterVideo &&
+      preferredSourceId &&
+      afterVideo.sources?.some((s) => s.sourceId === preferredSourceId)
+    ) {
+      get().switchMediaSource(preferredSourceId);
+    }
   },
 }));

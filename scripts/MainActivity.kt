@@ -9,6 +9,7 @@ import android.webkit.WebView
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.OnBackPressedCallback
+import androidx.annotation.Keep
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -16,7 +17,9 @@ import androidx.core.view.WindowInsetsControllerCompat
 class MainActivity : TauriActivity() {
     private var webViewInstance: WebView? = null
 
+    @Keep
     class WebAppInterface(private val activity: MainActivity) {
+        @Keep
         @JavascriptInterface
         fun setFullscreen(fullscreen: Boolean) {
             activity.runOnUiThread {
@@ -32,6 +35,7 @@ class MainActivity : TauriActivity() {
             }
         }
 
+        @Keep
         @JavascriptInterface
         fun openBrowser(url: String) {
             activity.runOnUiThread {
@@ -43,19 +47,23 @@ class MainActivity : TauriActivity() {
             }
         }
 
+        @Keep
         @JavascriptInterface
         fun exitApp() {
-            activity.runOnUiThread {
-                activity.finishAffinity()
-                kotlin.system.exitProcess(0)
-            }
+            activity.terminateApp()
         }
     }
 
     override fun onWebViewCreate(webView: WebView) {
         super.onWebViewCreate(webView)
+        configureWebView(webView)
+    }
+
+    private fun configureWebView(webView: WebView) {
+        if (this.webViewInstance === webView) return
         this.webViewInstance = webView
         android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
+        webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
         webView.settings.mediaPlaybackRequiresUserGesture = false
         webView.settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
@@ -66,7 +74,23 @@ class MainActivity : TauriActivity() {
                 startActivity(intent)
             } catch (e: Exception) {}
         }
-        webView.addJavascriptInterface(WebAppInterface(this), "AndroidNative")
+        try {
+            webView.addJavascriptInterface(WebAppInterface(this), "AndroidNative")
+        } catch (e: Exception) {}
+    }
+
+    private fun terminateApp() {
+        runOnUiThread {
+            try {
+                moveTaskToBack(true)
+            } catch (e: Exception) {}
+            try {
+                finishAndRemoveTask()
+            } catch (e: Exception) {}
+            try {
+                finishAffinity()
+            } catch (e: Exception) {}
+        }
     }
 
     private fun findWebView(root: View): WebView? {
@@ -80,17 +104,38 @@ class MainActivity : TauriActivity() {
         return null
     }
 
+    override fun onResume() {
+        super.onResume()
+        window.decorView.post {
+            val wv = webViewInstance ?: findWebView(window.decorView.rootView)
+            if (wv != null) {
+                configureWebView(wv)
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        window.decorView.post {
+            val wv = webViewInstance ?: findWebView(window.decorView.rootView)
+            if (wv != null) {
+                configureWebView(wv)
+            }
+        }
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 val wv = webViewInstance ?: findWebView(window.decorView.rootView)
                 if (wv != null) {
-                    wv.evaluateJavascript("window.__VEXA_ON_BACK_PRESSED && window.__VEXA_ON_BACK_PRESSED()") { _ -> }
+                    configureWebView(wv)
+                    wv.evaluateJavascript("(function(){ return window.__VEXA_ON_BACK_PRESSED ? window.__VEXA_ON_BACK_PRESSED() : 'EXIT_APP'; })()") { res ->
+                        if (res != null && res.contains("EXIT_APP")) {
+                            terminateApp()
+                        }
+                    }
                 } else {
-                    isEnabled = false
-                    onBackPressedDispatcher.onBackPressed()
+                    terminateApp()
                 }
             }
         })

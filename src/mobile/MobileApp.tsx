@@ -21,14 +21,13 @@ export const MobileApp: React.FC = () => {
   useEffect(() => {
     let backListener: { unregister: () => Promise<void> } | undefined;
 
-    const handleBackAction = () => {
+    const handleBackAction = (): string => {
       const store = useAppStore.getState();
 
-      // 1. If player is in iframe fullscreen or native fullscreen, exit fullscreen instead of exiting app
       const iframeExitFsBtn = document.getElementById("vx-iframe-exit-fs-btn");
       if (iframeExitFsBtn) {
         iframeExitFsBtn.click();
-        return;
+        return "HANDLED";
       }
 
       if (store.isMobileFullscreen) {
@@ -37,35 +36,38 @@ export const MobileApp: React.FC = () => {
         try {
           (window.screen.orientation as any)?.unlock?.();
         } catch {}
-        return;
+        return "HANDLED";
       }
 
-      // 2. If inside Discover webview, navigate back in webview or return to portal
       if (store.activeTab === "discover") {
         const webviewBackBtn = document.getElementById("vx-webview-back-btn");
         if (webviewBackBtn) {
           webviewBackBtn.click();
-          return;
+          return "HANDLED";
         }
       }
 
-      // 3. If in another tab, return to main discover tab
       if (store.activeTab !== "discover") {
         store.setActiveTab("discover");
-        return;
+        return "HANDLED";
       }
 
-      // 4. On root discover portal: double press to exit
       const now = Date.now();
-      if (now - lastBackPressTimeRef.current < 2000) {
+      const elapsed = now - lastBackPressTimeRef.current;
+      if (elapsed > 0 && elapsed < 60) {
+        return "HANDLED";
+      }
+      if (elapsed >= 60 && elapsed < 2500) {
         try {
           (window as any).AndroidNative?.exitApp?.();
         } catch {}
         invoke("commands_exit_app").catch(() => {});
         exit(0).catch(() => {});
+        return "EXIT_APP";
       } else {
         lastBackPressTimeRef.current = now;
         store.showToast("再按一次退出应用");
+        return "HANDLED";
       }
     };
 

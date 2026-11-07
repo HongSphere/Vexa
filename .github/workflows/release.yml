@@ -119,6 +119,10 @@ jobs:
           if [ -n "$MAIN_ACTIVITY" ] && [ -f "scripts/MainActivity.kt" ]; then
             cp scripts/MainActivity.kt "$MAIN_ACTIVITY"
           fi
+          PROGUARD_FILE="src-tauri/gen/android/app/proguard-rules.pro"
+          if [ -f "$PROGUARD_FILE" ]; then
+            printf "\n-keep class com.hongsphere.vexa.MainActivity\$WebAppInterface { *; }\n-keepclassmembers class * {\n    @android.webkit.JavascriptInterface <methods>;\n}\n" >> "$PROGUARD_FILE"
+          fi
           CLEAN_VER="${GITHUB_REF_NAME#v}"
           if [ -z "$CLEAN_VER" ] || [ "$CLEAN_VER" = "$GITHUB_REF_NAME" ]; then
             CLEAN_VER="1.0.1"

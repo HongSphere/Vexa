@@ -29,7 +29,8 @@ fn active_asset_base_lock() -> &'static RwLock<String> {
 pub fn set_active_upstream(url: &str) {
     if let Ok(parsed) = reqwest::Url::parse(url) {
         if let Some(host) = parsed.host_str() {
-            let origin = format!("{}://{}", parsed.scheme(), host);
+            let port_str = parsed.port().map(|p| format!(":{}", p)).unwrap_or_default();
+            let origin = format!("{}://{}{}", parsed.scheme(), host, port_str);
             if let Ok(mut lock) = active_upstream_lock().write() {
                 *lock = origin;
             }
@@ -234,7 +235,8 @@ async fn proxy_api_handler(
     if let Some(ref r_url) = custom_ref {
         if let Ok(parsed_ref) = reqwest::Url::parse(r_url) {
             if let Some(host) = parsed_ref.host_str() {
-                req = req.header("Origin", format!("{}://{}", parsed_ref.scheme(), host));
+                let port_str = parsed_ref.port().map(|p| format!(":{}", p)).unwrap_or_default();
+                req = req.header("Origin", format!("{}://{}{}", parsed_ref.scheme(), host, port_str));
             }
         }
         req = req.header("Referer", r_url);
@@ -244,8 +246,9 @@ async fn proxy_api_handler(
             req = req.header("Origin", &upstream);
             req = req.header("Referer", format!("{}/", upstream.trim_end_matches('/')));
         } else if let Some(host) = parsed.host_str() {
-            req = req.header("Origin", format!("{}://{}", parsed.scheme(), host));
-            req = req.header("Referer", format!("{}://{}/", parsed.scheme(), host));
+            let port_str = parsed.port().map(|p| format!(":{}", p)).unwrap_or_default();
+            req = req.header("Origin", format!("{}://{}{}", parsed.scheme(), host, port_str));
+            req = req.header("Referer", format!("{}://{}{}/", parsed.scheme(), host, port_str));
         }
     }
 
@@ -258,7 +261,12 @@ async fn proxy_api_handler(
     if let Some(cookie) = req_headers.get(header::COOKIE) {
         req = req.header(header::COOKIE, cookie);
     }
-    if let Some(ua) = req_headers.get(header::USER_AGENT) {
+    if custom_ref.is_some() {
+        req = req.header(
+            header::USER_AGENT,
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        );
+    } else if let Some(ua) = req_headers.get(header::USER_AGENT) {
         req = req.header(header::USER_AGENT, ua);
     }
 
@@ -660,14 +668,16 @@ async fn proxy_web_handler(
         if let Some(ref ref_u) = current_referer {
             if let Ok(parsed_ref) = reqwest::Url::parse(ref_u) {
                 if let Some(host) = parsed_ref.host_str() {
-                    req = req.header("Origin", format!("{}://{}", parsed_ref.scheme(), host));
+                    let port_str = parsed_ref.port().map(|p| format!(":{}", p)).unwrap_or_default();
+                    req = req.header("Origin", format!("{}://{}{}", parsed_ref.scheme(), host, port_str));
                 }
             }
             req = req.header("Referer", ref_u);
         } else if let Ok(parsed) = reqwest::Url::parse(&current_url) {
             if let Some(host) = parsed.host_str() {
-                req = req.header("Referer", format!("{}://{}/", parsed.scheme(), host));
-                req = req.header("Origin", format!("{}://{}", parsed.scheme(), host));
+                let port_str = parsed.port().map(|p| format!(":{}", p)).unwrap_or_default();
+                req = req.header("Referer", format!("{}://{}{}/", parsed.scheme(), host, port_str));
+                req = req.header("Origin", format!("{}://{}{}", parsed.scheme(), host, port_str));
             }
         }
 
@@ -680,6 +690,9 @@ async fn proxy_web_handler(
         let resp = match req.send().await {
             Ok(r) => r,
             Err(e) => {
+                if !html_bytes.is_empty() {
+                    break;
+                }
                 return (
                     StatusCode::BAD_GATEWAY,
                     [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
@@ -729,10 +742,19 @@ async fn proxy_web_handler(
             if let Some(caps) = re.captures(&peek_html) {
                 let raw_src = caps[1].trim();
                 if !raw_src.is_empty() && !raw_src.starts_with("javascript:") && !raw_src.starts_with("about:") {
+                    let effective_src = if raw_src.contains(".cdn.") && raw_src.contains("/jx.php?") {
+                        if let Some(q_idx) = raw_src.find('?') {
+                            format!("/jx/jx.php{}", &raw_src[q_idx..])
+                        } else {
+                            raw_src.to_string()
+                        }
+                    } else {
+                        raw_src.to_string()
+                    };
                     if let Ok(base) = reqwest::Url::parse(&final_url) {
-                        if let Ok(joined) = base.join(raw_src) {
+                        if let Ok(joined) = base.join(&effective_src) {
                             let s = joined.to_string();
-                            if s != current_url && s != final_url {
+                            if s != final_url {
                                 next_hop_url = Some(s);
                             }
                         }
@@ -873,6 +895,50 @@ async fn proxy_web_handler(
     }
 
     if is_shield {
+        if let Ok(re) = regex::Regex::new(r#"(?i)(<script[^>]*\ssrc=["'])([^"']+)(["'])"#) {
+            clean_html = re.replace_all(&clean_html, |caps: &regex::Captures| {
+                let prefix = &caps[1];
+                let raw_src = caps[2].trim();
+                let suffix = &caps[3];
+                if raw_src.is_empty()
+                    || raw_src.starts_with("http://")
+                    || raw_src.starts_with("https://")
+                    || raw_src.starts_with("//")
+                    || raw_src.starts_with("data:")
+                    || raw_src.starts_with("javascript:")
+                {
+                    format!("{}{}{}", prefix, raw_src, suffix)
+                } else {
+                    let abs_src = reqwest::Url::parse(&final_url)
+                        .and_then(|b| b.join(raw_src))
+                        .map(|u| u.to_string())
+                        .unwrap_or_else(|_| raw_src.to_string());
+                    format!("{}{}{}", prefix, abs_src, suffix)
+                }
+            }).to_string();
+        }
+        if let Ok(re) = regex::Regex::new(r#"(?i)(<link[^>]*\shref=["'])([^"']+)(["'])"#) {
+            clean_html = re.replace_all(&clean_html, |caps: &regex::Captures| {
+                let prefix = &caps[1];
+                let raw_href = caps[2].trim();
+                let suffix = &caps[3];
+                if raw_href.is_empty()
+                    || raw_href.starts_with("http://")
+                    || raw_href.starts_with("https://")
+                    || raw_href.starts_with("//")
+                    || raw_href.starts_with("data:")
+                    || raw_href.starts_with("javascript:")
+                {
+                    format!("{}{}{}", prefix, raw_href, suffix)
+                } else {
+                    let abs_href = reqwest::Url::parse(&final_url)
+                        .and_then(|b| b.join(raw_href))
+                        .map(|u| u.to_string())
+                        .unwrap_or_else(|_| raw_href.to_string());
+                    format!("{}{}{}", prefix, abs_href, suffix)
+                }
+            }).to_string();
+        }
         if let Ok(re) = regex::Regex::new(r#"(?i)(<iframe[^>]*\ssrc=["'])([^"']+)(["'])"#) {
             clean_html = re.replace_all(&clean_html, |caps: &regex::Captures| {
                 let prefix = &caps[1];
@@ -1316,6 +1382,11 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
         var rawUrl = (typeof input === 'string') ? input : (input && input.url ? input.url : '');
         var urlStr = toFullApiUrl(rawUrl);
         if (shouldRouteToM3u8Proxy(urlStr)) {{
+          try {{
+            if (realParent && realParent !== window) {{
+              realParent.postMessage({{ type: 'VEXA_SNIFFED_STREAM', url: urlStr }}, '*');
+            }}
+          }} catch(e) {{}}
           var m3u8Proxied = 'http://127.0.0.1:{port}/m3u8?url=' + encodeURIComponent(urlStr);
           if (typeof input === 'string') {{
             input = m3u8Proxied;
@@ -1354,6 +1425,11 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
       if (typeof url === 'string') {{
         var full = toFullApiUrl(url);
         if (shouldRouteToM3u8Proxy(full)) {{
+          try {{
+            if (realParent && realParent !== window) {{
+              realParent.postMessage({{ type: 'VEXA_SNIFFED_STREAM', url: full }}, '*');
+            }}
+          }} catch(e) {{}}
           newUrl = 'http://127.0.0.1:{port}/m3u8?url=' + encodeURIComponent(full);
         }} else if (shouldRouteToApiProxy(full)) {{
           newUrl = 'http://127.0.0.1:{port}/api_proxy?url=' + encodeURIComponent(full) + (isShieldMode && upstreamBase ? '&ref_url=' + encodeURIComponent(upstreamBase) : '');
@@ -1368,6 +1444,52 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
       return origXhrOpen.apply(this, args);
     }};
   }} catch(e) {{}}
+
+  if (isShieldMode) {{
+    try {{
+      var notifyFsToggle = function() {{
+        try {{
+          if (realParent && realParent !== window) {{
+            realParent.postMessage({{ type: 'VEXA_IFRAME_FULLSCREEN_TOGGLE' }}, '*');
+          }}
+        }} catch(e) {{}}
+      }};
+      if (Element.prototype.requestFullscreen) {{
+        var origReqFs = Element.prototype.requestFullscreen;
+        Element.prototype.requestFullscreen = function() {{
+          notifyFsToggle();
+          return origReqFs.apply(this, arguments).catch(function() {{}});
+        }};
+      }}
+      if (Element.prototype.webkitRequestFullscreen) {{
+        var origWebkitReqFs = Element.prototype.webkitRequestFullscreen;
+        Element.prototype.webkitRequestFullscreen = function() {{
+          notifyFsToggle();
+          try {{ return origWebkitReqFs.apply(this, arguments); }} catch(e) {{}}
+        }};
+      }}
+      if (window.HTMLVideoElement && HTMLVideoElement.prototype.webkitEnterFullscreen) {{
+        HTMLVideoElement.prototype.webkitEnterFullscreen = function() {{
+          notifyFsToggle();
+        }};
+      }}
+      document.addEventListener('click', function(e) {{
+        var t = e.target;
+        if (!t || !t.closest) return;
+        var fsBtn = t.closest('.art-control-fullscreen, .art-control-fullscreenWeb, .dplayer-full-icon, .dplayer-full-in-icon, .vjs-fullscreen-control, [aria-label*="全屏"], [title*="全屏"]');
+        if (fsBtn) {{
+          notifyFsToggle();
+        }}
+      }}, true);
+      window.addEventListener('DOMContentLoaded', function() {{
+        try {{
+          if (realParent && realParent !== window) {{
+            realParent.postMessage({{ type: 'VEXA_IFRAME_READY' }}, '*');
+          }}
+        }} catch(e) {{}}
+      }});
+    }} catch(e) {{}}
+  }}
 
   function toRealUrl(u) {{
     if (!u || typeof u !== 'string') return '';
