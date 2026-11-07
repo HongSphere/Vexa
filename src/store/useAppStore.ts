@@ -127,7 +127,8 @@ interface AppState {
   loadAndPlayUrl: (
     url: string,
     startPosition?: number,
-    previewItem?: SearchResultItem
+    previewItem?: SearchResultItem,
+    titleHint?: string
   ) => Promise<void>;
   switchResolution: (format: VideoFormat, currentPosition: number) => void;
   switchMediaSource: (sourceId: string) => void;
@@ -373,12 +374,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     }, 3200);
   },
 
-  loadAndPlayUrl: async (rawInput, startPosition, previewItem) => {
+  loadAndPlayUrl: async (rawInput, startPosition, previewItem, titleHint) => {
     const trimmed = rawInput.trim();
     if (!trimmed) return;
     const { settings, history, showToast } = get();
 
-    // Hide embedded official platform webview immediately when switching to player
     actionPlatformWebview("hide").catch(() => {});
 
     const savedHistory = history.find((h) => h.url === trimmed);
@@ -397,7 +397,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
 
     try {
-      const metadata = await parseMediaUrl(trimmed, settings.proxyUrl);
+      const metadata = await parseMediaUrl(trimmed, titleHint, settings.proxyUrl);
       const finalMetadata: VideoMetadata = previewItem
         ? {
             ...metadata,
@@ -585,7 +585,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       // On-demand original video parsing (officialOnly = true)
       showToast(`正在使用官方线路解析原视频流...`);
-      parseMediaUrl(target.playUrl, settings.proxyUrl, true)
+      parseMediaUrl(target.playUrl, undefined, settings.proxyUrl, true)
         .then((origMeta) => {
           const latest = get().currentVideo;
           if (!latest) return;

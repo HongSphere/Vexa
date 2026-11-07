@@ -29,6 +29,7 @@ fn get_proxy_port() -> u16 {
 async fn parse_media_url(
     app: AppHandle,
     url: String,
+    title_hint: Option<String>,
     proxy_url: Option<String>,
     official_only: Option<bool>,
 ) -> Result<VideoMetadata, String> {
@@ -36,11 +37,13 @@ async fn parse_media_url(
     if official_only.unwrap_or(false) {
         return extract_original_only(&url, proxy_url.as_deref()).await;
     }
-    let title_hint = get_cached_title();
-    let hint_opt = if title_hint.trim().is_empty() {
+    let hint = title_hint
+        .filter(|t| !t.trim().is_empty())
+        .unwrap_or_else(get_cached_title);
+    let hint_opt = if hint.trim().is_empty() {
         None
     } else {
-        Some(title_hint.as_str())
+        Some(hint.as_str())
     };
     parse_url_entry(&url, hint_opt, proxy_url.as_deref()).await
 }

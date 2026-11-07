@@ -26,11 +26,13 @@ export async function getProxyPort(): Promise<number> {
 
 export async function parseMediaUrl(
   url: string,
+  titleHint?: string,
   proxyUrl?: string,
   officialOnly?: boolean
 ): Promise<VideoMetadata> {
   return await invoke<VideoMetadata>("parse_media_url", {
     url,
+    titleHint: titleHint || null,
     proxyUrl: proxyUrl || null,
     officialOnly: officialOnly ?? false,
   });

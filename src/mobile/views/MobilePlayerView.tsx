@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   Download,
   Heart,
@@ -15,6 +15,10 @@ import {
   Maximize,
   Minimize,
   RefreshCw,
+  Volume2,
+  Sun,
+  FastForward,
+  Rewind,
 } from "lucide-react";
 import { useAppStore } from "../../store/useAppStore";
 import { MobileVideoPlayer } from "../components/MobileVideoPlayer";
@@ -65,6 +69,125 @@ export const MobilePlayerView: React.FC = () => {
   const [sniffedStreamUrl, setSniffedStreamUrl] = useState("");
   const [useNativeForSniffed, setUseNativeForSniffed] = useState(false);
   const [showFsControls, setShowFsControls] = useState(true);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const [iframeBrightness, setIframeBrightness] = useState(1);
+  const [iframeVolume, setIframeVolume] = useState(1);
+  const [gestureHud, setGestureHud] = useState<{
+    icon: "sun" | "volume" | "forward" | "rewind";
+    text: string;
+  } | null>(null);
+  const hudTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fsControlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchStateRef = useRef<{
+    startX: number;
+    startY: number;
+    startTime: number;
+    startBrightness: number;
+    startVolume: number;
+    mode: "none" | "seek" | "volume" | "brightness";
+    deltaSec: number;
+    lastTapTime: number;
+    lastTapX: number;
+  }>({
+    startX: 0,
+    startY: 0,
+    startTime: 0,
+    startBrightness: 1,
+    startVolume: 1,
+    mode: "none",
+    deltaSec: 0,
+    lastTapTime: 0,
+    lastTapX: 0,
+  });
+
+  const triggerControlsVisibility = () => {
+    setShowFsControls(true);
+    if (fsControlsTimerRef.current) clearTimeout(fsControlsTimerRef.current);
+    fsControlsTimerRef.current = setTimeout(() => {
+      setShowFsControls(false);
+    }, 3200);
+  };
+
+  const showHud = (icon: "sun" | "volume" | "forward" | "rewind", text: string) => {
+    if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
+    setGestureHud({ icon, text });
+    hudTimerRef.current = setTimeout(() => {
+      setGestureHud(null);
+    }, 800);
+  };
+
+  const handleIframeTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const now = Date.now();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = touch.clientX - rect.left;
+    const isLeftHalf = x < rect.width / 2;
+
+    triggerControlsVisibility();
+
+    if (now - touchStateRef.current.lastTapTime < 320 && Math.abs(x - touchStateRef.current.lastTapX) < 80) {
+      const step = isLeftHalf ? -10 : 10;
+      iframeRef.current?.contentWindow?.postMessage({ type: "VEXA_SEEK_RELATIVE", seconds: step }, "*");
+      showHud(step > 0 ? "forward" : "rewind", `${step > 0 ? "快进" : "快退"} ${Math.abs(step)}s`);
+      touchStateRef.current.lastTapTime = 0;
+      return;
+    }
+
+    touchStateRef.current = {
+      startX: touch.clientX,
+      startY: touch.clientY,
+      startTime: now,
+      startBrightness: iframeBrightness,
+      startVolume: iframeVolume,
+      mode: "none",
+      deltaSec: 0,
+      lastTapTime: now,
+      lastTapX: x,
+    };
+  };
+
+  const handleIframeTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const st = touchStateRef.current;
+    const dx = touch.clientX - st.startX;
+    const dy = touch.clientY - st.startY;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const isLeftHalf = st.startX - rect.left < rect.width / 2;
+
+    if (st.mode === "none") {
+      if (Math.abs(dx) > 18 && Math.abs(dx) > Math.abs(dy)) {
+        st.mode = "seek";
+      } else if (Math.abs(dy) > 18 && Math.abs(dy) > Math.abs(dx)) {
+        st.mode = isLeftHalf ? "brightness" : "volume";
+      }
+    }
+
+    if (st.mode === "seek") {
+      const delta = Math.round(dx / 12) * 5;
+      st.deltaSec = delta;
+      showHud(delta >= 0 ? "forward" : "rewind", `${delta >= 0 ? "快进" : "快退"} ${Math.abs(delta)}s`);
+    } else if (st.mode === "brightness") {
+      const newB = Math.max(0.3, Math.min(1.5, st.startBrightness - dy / 180));
+      setIframeBrightness(newB);
+      showHud("sun", `亮度 ${Math.round((newB / 1.5) * 100)}%`);
+    } else if (st.mode === "volume") {
+      const newV = Math.max(0, Math.min(1, st.startVolume - dy / 180));
+      setIframeVolume(newV);
+      iframeRef.current?.contentWindow?.postMessage({ type: "VEXA_SET_VOLUME", delta: -dy / 1800 }, "*");
+      showHud("volume", `音量 ${Math.round(newV * 100)}%`);
+    }
+  };
+
+  const handleIframeTouchEnd = () => {
+    const st = touchStateRef.current;
+    if (st.mode === "seek" && st.deltaSec !== 0) {
+      iframeRef.current?.contentWindow?.postMessage({ type: "VEXA_SEEK_RELATIVE", seconds: st.deltaSec }, "*");
+    }
+    st.mode = "none";
+    st.deltaSec = 0;
+  };
 
   const iframeSrc = useMemo(() => {
     if (!activeSource?.playUrl) return "";
@@ -147,6 +270,7 @@ export const MobilePlayerView: React.FC = () => {
       ) {
         setIsIframeLoading(false);
         setSniffedStreamUrl((prev) => prev || e.data.url);
+        setUseNativeForSniffed(true);
       }
     };
     window.addEventListener("message", handleMessage);
@@ -209,8 +333,12 @@ export const MobilePlayerView: React.FC = () => {
   }, [setIsMobileFullscreen]);
 
   const iframeContainerStyle: React.CSSProperties = useMemo(() => {
-    if (!isIframeFullscreen) return {};
+    const base: React.CSSProperties = {
+      filter: `brightness(${iframeBrightness})`,
+    };
+    if (!isIframeFullscreen) return base;
     return {
+      ...base,
       position: "fixed",
       inset: 0,
       width: "100vw",
@@ -218,7 +346,7 @@ export const MobilePlayerView: React.FC = () => {
       zIndex: 99999,
       backgroundColor: "#000000",
     };
-  }, [isIframeFullscreen]);
+  }, [isIframeFullscreen, iframeBrightness]);
 
   // Default active tab based on episode count
   useEffect(() => {
@@ -389,13 +517,16 @@ export const MobilePlayerView: React.FC = () => {
         {isIframe && !(useNativeForSniffed && sniffedFormat) ? (
           <div
             style={iframeContainerStyle}
-            onTouchStart={() => setShowFsControls(true)}
-            onClick={() => setShowFsControls(true)}
+            onTouchStart={handleIframeTouchStart}
+            onTouchMove={handleIframeTouchMove}
+            onTouchEnd={handleIframeTouchEnd}
+            onClick={triggerControlsVisibility}
             className={`w-full h-full bg-black relative ${
               isIframeFullscreen ? "!w-full !h-full" : ""
             }`}
           >
             <iframe
+              ref={iframeRef}
               key={`${iframeSrc}-${iframeReloadKey}`}
               src={iframeSrc}
               title={activeSource?.sourceName || "播放器"}
@@ -405,6 +536,17 @@ export const MobilePlayerView: React.FC = () => {
               allowFullScreen
               sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
             />
+            {gestureHud && (
+              <div className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none">
+                <div className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-black/85 backdrop-blur-md border border-white/15 text-white shadow-2xl text-sm font-bold tracking-wide">
+                  {gestureHud.icon === "sun" && <Sun className="w-5 h-5 text-amber-400" />}
+                  {gestureHud.icon === "volume" && <Volume2 className="w-5 h-5 text-sky-400" />}
+                  {gestureHud.icon === "forward" && <FastForward className="w-5 h-5 text-emerald-400" />}
+                  {gestureHud.icon === "rewind" && <Rewind className="w-5 h-5 text-amber-400" />}
+                  <span>{gestureHud.text}</span>
+                </div>
+              </div>
+            )}
             {isIframeLoading && (
               <div className="absolute inset-0 z-10 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center gap-2.5 px-4 text-center pointer-events-none">
                 <Loader2 className="w-6 h-6 text-sky-400 animate-spin" />
@@ -462,7 +604,11 @@ export const MobilePlayerView: React.FC = () => {
                 </div>
               </div>
             ) : (
-              <div className="absolute top-2 right-2 z-20 flex items-center gap-1.5">
+              <div
+                className={`absolute top-2 right-2 z-20 flex items-center gap-1.5 transition-opacity duration-300 ${
+                  showFsControls ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+                }`}
+              >
                 <button
                   onClick={() => {
                     setIframeReloadKey((k) => k + 1);
@@ -486,7 +632,7 @@ export const MobilePlayerView: React.FC = () => {
                   className="px-2.5 py-1 rounded-full bg-sky-500/90 backdrop-blur-md border border-sky-300/30 text-white text-[11px] font-semibold flex items-center gap-1 shadow-md active:scale-95 transition-all"
                 >
                   <Maximize className="w-3 h-3" />
-                  <span>横屏全屏</span>
+                  <span>全屏</span>
                 </button>
               </div>
             )}

@@ -29,6 +29,7 @@ export const MobileDiscoverView: React.FC = () => {
 
   const [viewMode, setViewMode] = useState<"portal" | "webview">("portal");
   const [activeInitialUrl, setActiveInitialUrl] = useState<string>("");
+  const [currentWebviewTitle, setCurrentWebviewTitle] = useState<string>("");
   const [historyDepth, setHistoryDepth] = useState<number>(1);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
@@ -49,7 +50,7 @@ export const MobileDiscoverView: React.FC = () => {
       showToast("未检测到有效视频链接");
       return;
     }
-    await loadAndPlayUrl(query);
+    await loadAndPlayUrl(query, 0, undefined, currentWebviewTitle);
   };
 
   const handleBack = () => {
@@ -63,11 +64,13 @@ export const MobileDiscoverView: React.FC = () => {
     }
   };
 
-  // Listen for inner navigation messages from the proxy script
   useEffect(() => {
     const handleMsg = (e: MessageEvent) => {
       if (e.data?.type === "VEXA_NAV_URL" && e.data?.url) {
         setCurrentWebviewUrl(e.data.url);
+        if (e.data.title && typeof e.data.title === "string" && e.data.title.trim()) {
+          setCurrentWebviewTitle(e.data.title.trim());
+        }
         if (activeInitialUrl && e.data.url !== activeInitialUrl) {
           setHistoryDepth((prev) => prev + 1);
         }

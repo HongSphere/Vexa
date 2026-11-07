@@ -159,6 +159,9 @@ async fn proxy_fallback_handler(
     if let Some(ua) = req_headers.get(header::USER_AGENT) {
         req = req.header(header::USER_AGENT, ua);
     }
+    if let Some(xrw) = req_headers.get("x-requested-with") {
+        req = req.header("X-Requested-With", xrw);
+    }
 
     if !body.is_empty() {
         req = req.body(body);
@@ -260,6 +263,11 @@ async fn proxy_api_handler(
     }
     if let Some(cookie) = req_headers.get(header::COOKIE) {
         req = req.header(header::COOKIE, cookie);
+    }
+    if let Some(xrw) = req_headers.get("x-requested-with") {
+        req = req.header("X-Requested-With", xrw);
+    } else {
+        req = req.header("X-Requested-With", "XMLHttpRequest");
     }
     if custom_ref.is_some() {
         req = req.header(
@@ -1491,6 +1499,29 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
     }} catch(e) {{}}
   }}
 
+  try {{
+    var checkVideoSrc = function(v) {{
+      if (v && v.src && shouldRouteToM3u8Proxy(v.src)) {{
+        try {{
+          if (realParent && realParent !== window) {{
+            realParent.postMessage({{ type: 'VEXA_SNIFFED_STREAM', url: toFullApiUrl(v.src) }}, '*');
+          }}
+        }} catch(e) {{}}
+      }}
+    }};
+    if (window.MutationObserver) {{
+      var vObs = new MutationObserver(function(mutations) {{
+        for (var i = 0; i < mutations.length; i++) {{
+          var m = mutations[i];
+          if (m.target && m.target.tagName === 'VIDEO') {{
+            checkVideoSrc(m.target);
+          }}
+        }}
+      }});
+      vObs.observe(document.documentElement, {{ childList: true, subtree: true, attributes: true, attributeFilter: ['src'] }});
+    }}
+  }} catch(e) {{}}
+
   function toRealUrl(u) {{
     if (!u || typeof u !== 'string') return '';
     var trimmed = u.trim();
@@ -1528,51 +1559,74 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
   }}
 
   var lastReported = "";
-  function notifyParentUrl(u) {{
+  function notifyParentUrl(u, t) {{
     var real = toRealUrl(u);
-    if (!real || real.indexOf('127.0.0.1') !== -1 || real === lastReported) return;
+    if (!real || real.indexOf('127.0.0.1') !== -1) return;
+    var pageTitle = t || document.title || '';
+    if (real === lastReported && !pageTitle) return;
     lastReported = real;
     try {{
       if (realParent && realParent !== window) {{
-        realParent.postMessage({{ type: 'VEXA_NAV_URL', url: real }}, '*');
+        realParent.postMessage({{ type: 'VEXA_NAV_URL', url: real, title: pageTitle }}, '*');
       }}
     }} catch(e) {{}}
   }}
 
-  notifyParentUrl(upstreamBase);
+  notifyParentUrl(upstreamBase, document.title);
 
-  // Hook History API & hash/popstate for single-page application router sync
   var origPushState = history.pushState;
   if (origPushState) {{
     history.pushState = function() {{
       origPushState.apply(this, arguments);
-      setTimeout(function() {{ notifyParentUrl(window.location.href); }}, 60);
+      setTimeout(function() {{ notifyParentUrl(window.location.href, document.title); }}, 100);
     }};
   }}
   var origReplaceState = history.replaceState;
   if (origReplaceState) {{
     history.replaceState = function() {{
       origReplaceState.apply(this, arguments);
-      setTimeout(function() {{ notifyParentUrl(window.location.href); }}, 60);
+      setTimeout(function() {{ notifyParentUrl(window.location.href, document.title); }}, 100);
     }};
   }}
   window.addEventListener('popstate', function() {{
-    notifyParentUrl(window.location.href);
+    notifyParentUrl(window.location.href, document.title);
   }});
   window.addEventListener('hashchange', function() {{
-    notifyParentUrl(window.location.href);
+    notifyParentUrl(window.location.href, document.title);
   }});
 
-  // Periodic fallback check to sync SPA route changes without delay
-  setInterval(function() {{
-    notifyParentUrl(window.location.href);
-  }}, 1000);
+  try {{
+    var titleTag = document.querySelector('title');
+    if (titleTag && window.MutationObserver) {{
+      new MutationObserver(function() {{
+        notifyParentUrl(window.location.href, document.title);
+      }}).observe(titleTag, {{ childList: true, characterData: true, subtree: true }});
+    }}
+  }} catch(e) {{}}
 
-  // Listen for navigation messages from the host app (e.g. Android Back button)
+  setInterval(function() {{
+    notifyParentUrl(window.location.href, document.title);
+  }}, 2000);
+
   window.addEventListener('message', function(e) {{
-    if (e.data && e.data.type === 'VEXA_NAV_BACK') {{
+    if (!e.data || typeof e.data !== 'object') return;
+    if (e.data.type === 'VEXA_NAV_BACK') {{
       try {{
         window.history.back();
+      }} catch(err) {{}}
+    }} else if (e.data.type === 'VEXA_SEEK_RELATIVE' && typeof e.data.seconds === 'number') {{
+      try {{
+        var v = document.querySelector('video');
+        if (v) {{
+          v.currentTime = Math.max(0, Math.min(v.duration || 86400, v.currentTime + e.data.seconds));
+        }}
+      }} catch(err) {{}}
+    }} else if (e.data.type === 'VEXA_SET_VOLUME' && typeof e.data.delta === 'number') {{
+      try {{
+        var v2 = document.querySelector('video');
+        if (v2) {{
+          v2.volume = Math.max(0, Math.min(1, v2.volume + e.data.delta));
+        }}
       }} catch(err) {{}}
     }}
   }});
@@ -1609,7 +1663,17 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
     var a = target && target.closest ? target.closest('a[href], [data-href], [data-url]') : null;
     if (a) {{
       var rawHref = a.getAttribute('href') || a.getAttribute('data-href') || a.getAttribute('data-url') || '';
+      var itemTitle = a.getAttribute('title') || a.getAttribute('data-title') || a.getAttribute('alt') || '';
+      if (!itemTitle && a.innerText) {{
+        var txt = a.innerText.trim();
+        if (txt.length > 0 && txt.length <= 40 && txt.indexOf('\n') === -1) {{
+          itemTitle = txt;
+        }}
+      }}
       if (!rawHref || rawHref.startsWith('#') || rawHref.startsWith('javascript:')) {{
+        if (itemTitle) {{
+          notifyParentUrl(window.location.href, itemTitle);
+        }}
         return;
       }}
       if (isDisallowedScheme(rawHref) || isDisallowedScheme(a.href)) {{
@@ -1628,17 +1692,27 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
           }}
         }} catch(e) {{}}
 
-        // If target is external or target="_blank", route through local proxy
         if (isCrossDomain || a.target === '_blank') {{
           e.preventDefault();
           e.stopPropagation();
-          notifyParentUrl(realUrl);
+          notifyParentUrl(realUrl, itemTitle);
           window.location.href = "http://127.0.0.1:{port}/web?url=" + encodeURIComponent(realUrl);
         }} else {{
-          // Internal link or in-page SPA navigation: allow event to bubble so SPA routers can switch tabs
-          notifyParentUrl(realUrl);
+          notifyParentUrl(realUrl, itemTitle);
         }}
       }}
+    }} else if (target) {{
+      try {{
+        var p = target;
+        while (p && p !== document.body) {{
+          var t = p.getAttribute && (p.getAttribute('title') || p.getAttribute('data-title') || p.getAttribute('alt'));
+          if (t && typeof t === 'string' && t.trim().length > 1) {{
+            notifyParentUrl(window.location.href, t.trim());
+            break;
+          }}
+          p = p.parentElement;
+        }}
+      }} catch(err) {{}}
     }}
   }}, true);
 }})();
