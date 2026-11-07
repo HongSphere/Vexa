@@ -145,6 +145,12 @@ fn commands_open_browser(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn commands_exit_app(app: AppHandle) {
+    app.exit(0);
+    std::process::exit(0);
+}
+
+#[tauri::command]
 fn get_sources_config(app: AppHandle) -> sources_config::SourcesConfig {
     use tauri::Manager;
     if let Ok(dir) = app.path().app_config_dir().or_else(|_| app.path().app_data_dir()) {
@@ -271,6 +277,7 @@ pub fn run() {
             commands_updater_download,
             commands_updater_install,
             commands_open_browser,
+            commands_exit_app,
             commands_check_latest_github_release,
             get_sources_config,
             save_sources_config,

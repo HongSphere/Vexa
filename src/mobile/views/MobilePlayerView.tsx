@@ -310,10 +310,10 @@ export const MobilePlayerView: React.FC = () => {
             }`}
           >
             <iframe
+              key={iframeSrc}
               src={iframeSrc}
               title={activeSource?.sourceName || "播放器"}
               className="w-full h-full border-0"
-              referrerPolicy="no-referrer"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
               allowFullScreen
               sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"

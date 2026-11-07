@@ -386,10 +386,47 @@ async fn fetch_aggregated_sources(
     (sources, first_meta)
 }
 
+fn canonicalize_for_parser(raw_url: &str) -> String {
+    let trimmed = raw_url.trim();
+    if trimmed.contains("/x/m/play") || (trimmed.contains("//m.") && trimmed.contains("cid=")) {
+        if let Ok(parsed) = reqwest::Url::parse(trimmed) {
+            if let Some(host) = parsed.host_str() {
+                let desktop_host = host.strip_prefix("m.").unwrap_or(host);
+                let mut cid_val = None;
+                let mut vid_val = None;
+                for (k, v) in parsed.query_pairs() {
+                    if k == "cid" && !v.is_empty() {
+                        cid_val = Some(v.into_owned());
+                    } else if k == "vid" && !v.is_empty() {
+                        vid_val = Some(v.into_owned());
+                    }
+                }
+                if let Some(c) = cid_val {
+                    if let Some(v) = vid_val {
+                        return format!("{}://{}/x/cover/{}/{}.html", parsed.scheme(), desktop_host, c, v);
+                    } else {
+                        return format!("{}://{}/x/cover/{}.html", parsed.scheme(), desktop_host, c);
+                    }
+                }
+            }
+        }
+    }
+    if trimmed.contains("/alipay_video/id_") {
+        return trimmed
+            .replace("//m.", "//v.")
+            .replace("/alipay_video/", "/v_show/");
+    }
+    if trimmed.contains("//m.") {
+        return trimmed.replace("//m.", "//www.");
+    }
+    trimmed.to_string()
+}
+
 fn build_parse_sources(official_url: &str, title: &str) -> Vec<MediaSource> {
     if !official_url.starts_with("http://") && !official_url.starts_with("https://") {
         return vec![];
     }
+    let normalized_url = canonicalize_for_parser(official_url);
     let lines = crate::sources_config::get_active_parse_lines();
     lines
         .into_iter()
@@ -399,7 +436,7 @@ fn build_parse_sources(official_url: &str, title: &str) -> Vec<MediaSource> {
             matched_title: title.to_string(),
             remarks: "解析专线".to_string(),
             source_type: "jx_iframe".to_string(),
-            play_url: format!("{}{}", line.url_prefix, official_url),
+            play_url: format!("{}{}", line.url_prefix, normalized_url),
             episodes: vec![],
             formats: vec![],
         })
@@ -410,7 +447,9 @@ fn default_platform_showcase_title(_platform: &str) -> (&'static str, &'static s
     ("", "")
 }
 
-async fn extract_web_meta_title(url: &str) -> Option<String> {
+async fn extract_web_meta_title(raw_url: &str) -> Option<String> {
+    let normalized = canonicalize_for_parser(raw_url);
+    let url = normalized.as_str();
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
         .timeout(std::time::Duration::from_secs(3))
@@ -495,10 +534,10 @@ async fn extract_web_meta_title(url: &str) -> Option<String> {
     }
 
     // Dynamic endpoint fallback
-    let cid_re = Regex::new(r"/cover/([a-zA-Z0-9]+)").ok()?;
+    let cid_re = Regex::new(r"(?:/cover/|[?&]cid=)([a-zA-Z0-9]+)").ok()?;
     let vid_re = Regex::new(r"[?&]vid=([a-zA-Z0-9]+)|/([a-zA-Z0-9]{11})\.html").ok()?;
-    let cid = cid_re.captures(url).and_then(|c| c.get(1)).map(|m| m.as_str().to_string());
-    let vid = vid_re.captures(url).and_then(|c| c.get(1).or_else(|| c.get(2))).map(|m| m.as_str().to_string());
+    let cid = cid_re.captures(raw_url).or_else(|| cid_re.captures(url)).and_then(|c| c.get(1)).map(|m| m.as_str().to_string());
+    let vid = vid_re.captures(raw_url).or_else(|| vid_re.captures(url)).and_then(|c| c.get(1).or_else(|| c.get(2))).map(|m| m.as_str().to_string());
     if cid.is_some() || vid.is_some() {
         let q_param = if let Some(ref c) = cid {
             format!("cid={}", c)

@@ -42,6 +42,14 @@ class MainActivity : TauriActivity() {
                 } catch (e: Exception) {}
             }
         }
+
+        @JavascriptInterface
+        fun exitApp() {
+            activity.runOnUiThread {
+                activity.finishAffinity()
+                kotlin.system.exitProcess(0)
+            }
+        }
     }
 
     override fun onWebViewCreate(webView: WebView) {
@@ -50,6 +58,7 @@ class MainActivity : TauriActivity() {
         android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
         webView.settings.domStorageEnabled = true
         webView.settings.mediaPlaybackRequiresUserGesture = false
+        webView.settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         webView.setDownloadListener { url, _, _, _, _ ->
             try {
                 val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))

@@ -119,6 +119,12 @@ jobs:
           if [ -n "$MAIN_ACTIVITY" ] && [ -f "scripts/MainActivity.kt" ]; then
             cp scripts/MainActivity.kt "$MAIN_ACTIVITY"
           fi
+          CLEAN_VER="${GITHUB_REF_NAME#v}"
+          if [ -z "$CLEAN_VER" ] || [ "$CLEAN_VER" = "$GITHUB_REF_NAME" ]; then
+            CLEAN_VER="1.0.1"
+          fi
+          VER_CODE=$(echo "$CLEAN_VER" | awk -F. '{printf "%d%02d%02d", $1, $2, $3}')
+          printf "tauri.android.versionCode=%s\ntauri.android.versionName=%s\n" "$VER_CODE" "$CLEAN_VER" > src-tauri/gen/android/app/tauri.properties
           echo "Verified Android Manifest:"
           grep -C 3 "usesCleartextTraffic" "$MANIFEST" || true
           echo "Verified MainActivity:"
@@ -130,8 +136,14 @@ jobs:
         run: npx tauri android build --apk
 
       - name: Sign Android APK
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
-          keytool -genkeypair -v -keystore release.keystore -alias vexa -keyalg RSA -keysize 2048 -validity 10000 -storepass vexa123 -keypass vexa123 -dname "CN=Vexa, OU=App, O=Vexa, L=Hangzhou, ST=Zhejiang, C=CN"
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > release.keystore
+          else
+            keytool -genkeypair -v -keystore release.keystore -alias vexa -keyalg RSA -keysize 2048 -validity 10000 -storepass vexa123 -keypass vexa123 -dname "CN=Vexa, OU=App, O=Vexa, L=Hangzhou, ST=Zhejiang, C=CN"
+          fi
           BUILD_TOOLS_DIR=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
           echo "Using Android Build Tools: $BUILD_TOOLS_DIR"
           UNSIGNED_APK=$(find src-tauri/gen/android/app/build/outputs/apk -name "*unsigned.apk" | head -n 1)

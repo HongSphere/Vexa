@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { onBackButtonPress, exit } from "@tauri-apps/api/app";
 import { useAppStore } from "../store/useAppStore";
 import { setAppFullscreen } from "../services/api";
@@ -57,6 +58,10 @@ export const MobileApp: React.FC = () => {
       // 4. On root discover portal: double press to exit
       const now = Date.now();
       if (now - lastBackPressTimeRef.current < 2000) {
+        try {
+          (window as any).AndroidNative?.exitApp?.();
+        } catch {}
+        invoke("commands_exit_app").catch(() => {});
         exit(0).catch(() => {});
       } else {
         lastBackPressTimeRef.current = now;
