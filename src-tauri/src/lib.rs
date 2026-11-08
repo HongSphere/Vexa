@@ -8,7 +8,8 @@ pub mod sources_config;
 pub mod updater;
 
 use browser::{
-    control_platform_webview, get_cached_title, get_platform_webview_url,
+    control_platform_webview, detect_platform_from_url,
+    get_cached_title_for_platform, get_platform_webview_url,
     mount_or_update_platform_webview, sync_webview_cookies,
 };
 use downloader::{control_task, start_download};
@@ -37,14 +38,11 @@ async fn parse_media_url(
     if official_only.unwrap_or(false) {
         return extract_original_only(&url, proxy_url.as_deref()).await;
     }
+    let (plat, _) = detect_platform_from_url(&url);
     let hint = title_hint
         .filter(|t| !t.trim().is_empty())
-        .unwrap_or_else(get_cached_title);
-    let hint_opt = if hint.trim().is_empty() {
-        None
-    } else {
-        Some(hint.as_str())
-    };
+        .or_else(|| get_cached_title_for_platform(&plat));
+    let hint_opt = hint.as_deref().filter(|s| !s.trim().is_empty());
     parse_url_entry(&url, hint_opt, proxy_url.as_deref()).await
 }
 
@@ -99,6 +97,11 @@ async fn action_platform_webview(app: AppHandle, action: String) -> Result<Strin
 #[tauri::command]
 async fn current_platform_webview_url(app: AppHandle) -> Result<String, String> {
     get_platform_webview_url(&app)
+}
+
+#[tauri::command]
+fn get_latest_browsed_url() -> Option<String> {
+    proxy::get_latest_nav_url()
 }
 
 #[tauri::command]
@@ -275,6 +278,7 @@ pub fn run() {
             sync_platform_webview,
             action_platform_webview,
             current_platform_webview_url,
+            get_latest_browsed_url,
             commands_set_fullscreen,
             commands_updater_state,
             commands_updater_check,

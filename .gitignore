@@ -10,6 +10,9 @@ sources.json
 src-tauri/target/
 src-tauri/WixTools/
 src-tauri/gen/android/
+*.apk
+*.idsig
+*.ipa
 
 # Keys & Secrets
 *.key

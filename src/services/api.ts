@@ -121,6 +121,15 @@ export async function getCurrentPlatformWebviewUrl(): Promise<string> {
   return await invoke<string>("current_platform_webview_url");
 }
 
+export async function getLatestBrowsedUrl(): Promise<string> {
+  if (!isTauri()) return "";
+  try {
+    return (await invoke<string | null>("get_latest_browsed_url")) || "";
+  } catch {
+    return "";
+  }
+}
+
 export function subscribePlatformWebviewUrl(
   callback: (payload: { url: string; platform: string }) => void
 ): Promise<() => void> {

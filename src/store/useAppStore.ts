@@ -66,7 +66,9 @@ interface AppState {
   setActiveTab: (tab: NavTab) => void;
 
   activePlatform: PlatformId;
-  setActivePlatform: (platform: PlatformId) => void;
+  setActivePlatform: (platform: PlatformId, forceHome?: boolean) => void;
+  platformHistoryUrls: Record<string, string>;
+  setPlatformHistoryUrl: (platform: string, url: string) => void;
   currentWebviewUrl: string;
   setCurrentWebviewUrl: (url: string) => void;
   pendingWebviewNavUrl: string | null;
@@ -145,14 +147,22 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   activePlatform: "all",
-  setActivePlatform: (platform) => {
-    const sites = get().sourcesConfig.sites;
+  platformHistoryUrls: {},
+  setPlatformHistoryUrl: (platform, url) =>
+    set((state) => ({
+      platformHistoryUrls: { ...state.platformHistoryUrls, [platform]: url },
+    })),
+  setActivePlatform: (platform, forceHome = false) => {
+    const { activePlatform, sourcesConfig, platformHistoryUrls } = get();
+    const sites = sourcesConfig.sites;
     const found = sites.find((p) => p.id === platform);
     const home = found ? found.homeUrl : (sites[0]?.homeUrl || "about:blank");
+    const isSamePlatform = activePlatform === platform;
+    const targetUrl = (forceHome || isSamePlatform) ? home : (platformHistoryUrls[platform] || home);
     set({
       activePlatform: platform,
-      currentWebviewUrl: home,
-      pendingWebviewNavUrl: home,
+      currentWebviewUrl: targetUrl,
+      pendingWebviewNavUrl: targetUrl,
       activeTab: "discover",
     });
   },
@@ -410,7 +420,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         (a, b) => b.height - a.height
       );
 
-      // Prefer non-DASH progressive MP4 when matching preferredQuality (e.g. 480P) for instant single-stream playback
       const preferred =
         sortedFormats.find(
           (f) => !f.isDash && f.height <= settings.preferredQuality
@@ -421,10 +430,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         sortedFormats[0] ||
         null;
 
-      // 激活播放线路规则（遵循原生优先与纯净流优先守则）：
-      // 1. 若存在纯净直链媒体流 (m3u8)，优先激活原生播放器，杜绝第三方 iframe 恶俗广告
-      // 2. 若为官方原视频流直连 (sourceType === "native")，激活官方原画视频流
-      // 3. 若均无，才回退至解析专线或官方原网页
       const firstM3u8 = finalMetadata.sources?.find(
         (s) => s.sourceType === "m3u8"
       );
@@ -583,7 +588,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         return;
       }
 
-      // On-demand original video parsing (officialOnly = true)
       showToast(`正在使用官方线路解析原视频流...`);
       parseMediaUrl(target.playUrl, undefined, settings.proxyUrl, true)
         .then((origMeta) => {

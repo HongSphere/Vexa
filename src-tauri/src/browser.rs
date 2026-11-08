@@ -18,6 +18,11 @@ static CURRENT_WEBVIEW_LABEL: std::sync::Mutex<String> = std::sync::Mutex::new(S
 static CURRENT_WEBVIEW_IS_MOBILE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static WEBVIEW_GENERATION: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+static PLATFORM_WEBVIEW_POOL: Lazy<Mutex<std::collections::HashMap<String, String>>> =
+    Lazy::new(|| Mutex::new(std::collections::HashMap::new()));
+static PLATFORM_LRU: Lazy<Mutex<Vec<String>>> = Lazy::new(|| Mutex::new(Vec::new()));
+const MAX_POOL_SIZE: usize = 3;
+
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn get_active_child_webview(app: &AppHandle) -> Option<tauri::Webview> {
     let label = CURRENT_WEBVIEW_LABEL.lock().ok()?.clone();
@@ -32,6 +37,10 @@ static LAST_WEBVIEW_URL: Lazy<Mutex<String>> =
     Lazy::new(|| Mutex::new("about:blank".to_string()));
 static LAST_WEBVIEW_TITLE: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new(String::new()));
 static LAST_WEBVIEW_MEDIA_SRC: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new(String::new()));
+static PLATFORM_CACHED_URLS: Lazy<Mutex<std::collections::HashMap<String, String>>> =
+    Lazy::new(|| Mutex::new(std::collections::HashMap::new()));
+static PLATFORM_CACHED_TITLES: Lazy<Mutex<std::collections::HashMap<String, String>>> =
+    Lazy::new(|| Mutex::new(std::collections::HashMap::new()));
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,8 +59,10 @@ const WEBVIEW_BRIDGE_SCRIPT: &str = r#"
 
   const parseFeedMediaItem = (item) => {
     if (!item || typeof item !== 'object') return;
-    const awemeId = item.aweme_id || (item.video && item.video.play_addr && item.video.play_addr.uri);
-    if (!awemeId) return;
+    const mediaId = (item.video && item.video.play_addr && item.video.play_addr.uri)
+      || item.item_id || item.id || item.video_id
+      || (typeof item === 'object' && Object.entries(item).find(([k, v]) => k.endsWith('_id') && typeof v === 'string' && /^\d{16,21}$/.test(v))?.[1]);
+    if (!mediaId) return;
     const desc = item.desc || '';
     const nickname = (item.author && item.author.nickname) || '视频创作者';
     const videoObj = item.video || {};
@@ -66,8 +77,8 @@ const WEBVIEW_BRIDGE_SCRIPT: &str = r#"
       }
     }
     if (playUrl) {
-      window.__VEXA_FEED_MAP__[awemeId] = {
-        awemeId,
+      window.__VEXA_FEED_MAP__[mediaId] = {
+        mediaId,
         title: desc,
         nickname,
         playUrl
@@ -77,18 +88,15 @@ const WEBVIEW_BRIDGE_SCRIPT: &str = r#"
 
   const scanFeedMediaData = (jsonObj) => {
     if (!jsonObj || typeof jsonObj !== 'object') return;
-    if (Array.isArray(jsonObj.aweme_list)) {
-      jsonObj.aweme_list.forEach(parseFeedMediaItem);
-    }
-    if (Array.isArray(jsonObj.item_list)) {
-      jsonObj.item_list.forEach(parseFeedMediaItem);
-    }
-    if (jsonObj.aweme_detail) {
-      parseFeedMediaItem(jsonObj.aweme_detail);
+    for (const [k, v] of Object.entries(jsonObj)) {
+      if (Array.isArray(v) && (k.endsWith('_list') || k === 'items' || k === 'data' || k === 'list')) {
+        v.forEach(parseFeedMediaItem);
+      } else if (v && typeof v === 'object' && (k.endsWith('_detail') || k === 'detail' || k === 'data')) {
+        parseFeedMediaItem(v);
+      }
     }
   };
 
-  // Intercept fetch
   try {
     const origFetch = window.fetch;
     if (origFetch) {
@@ -96,7 +104,7 @@ const WEBVIEW_BRIDGE_SCRIPT: &str = r#"
         const u = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
         const resp = await origFetch.apply(this, args);
         try {
-          if (u && (u.includes('/aweme/v1/') || u.includes('/feed/') || u.includes('/detail/') || u.includes('/web/tab/'))) {
+          if (u && (u.includes('/feed/') || u.includes('/detail/') || u.includes('/web/tab/') || u.includes('/video/'))) {
             const clone = resp.clone();
             clone.json().then(data => scanFeedMediaData(data)).catch(() => {});
           }
@@ -106,7 +114,6 @@ const WEBVIEW_BRIDGE_SCRIPT: &str = r#"
     }
   } catch(_) {}
 
-  // Intercept XMLHttpRequest
   try {
     const origOpen = XMLHttpRequest.prototype.open;
     const origSend = XMLHttpRequest.prototype.send;
@@ -118,7 +125,7 @@ const WEBVIEW_BRIDGE_SCRIPT: &str = r#"
       this.addEventListener('load', function() {
         try {
           const u = this.__vexa_url;
-          if (typeof u === 'string' && (u.includes('/aweme/v1/') || u.includes('/feed/') || u.includes('/detail/') || u.includes('/web/tab/'))) {
+          if (typeof u === 'string' && (u.includes('/feed/') || u.includes('/detail/') || u.includes('/web/tab/') || u.includes('/video/'))) {
             const text = this.responseText;
             if (text && (text.startsWith('{') || text.startsWith('['))) {
               scanFeedMediaData(JSON.parse(text));
@@ -130,15 +137,90 @@ const WEBVIEW_BRIDGE_SCRIPT: &str = r#"
     };
   } catch(_) {}
 
+  const reportSyncToVexa = (forceUrl, forceTitle) => {
+    try {
+      const liveHref = forceUrl || window.location.href || '';
+      if (!liveHref || !liveHref.startsWith('http')) return;
+      const docTitle = forceTitle || (document.title ? document.title.trim() : '');
+      fetch('https://vexa.internal/sync?url=' + encodeURIComponent(liveHref) + '&title=' + encodeURIComponent(docTitle)).catch(() => {});
+    } catch(_) {}
+  };
+
+  try {
+    const origPushState = history.pushState;
+    if (origPushState) {
+      history.pushState = function(...args) {
+        const ret = origPushState.apply(this, args);
+        setTimeout(() => { try { syncPageMetaCookie(); } catch(_) {} }, 20);
+        return ret;
+      };
+    }
+    const origReplaceState = history.replaceState;
+    if (origReplaceState) {
+      history.replaceState = function(...args) {
+        const ret = origReplaceState.apply(this, args);
+        setTimeout(() => { try { syncPageMetaCookie(); } catch(_) {} }, 20);
+        return ret;
+      };
+    }
+    window.addEventListener('popstate', () => { setTimeout(() => { try { syncPageMetaCookie(); } catch(_) {} }, 20); }, true);
+    window.addEventListener('hashchange', () => { setTimeout(() => { try { syncPageMetaCookie(); } catch(_) {} }, 20); }, true);
+  } catch(_) {}
+
   const syncPageMetaCookie = () => {
     try {
       const href = window.location.href || '';
-      if (href.startsWith('http')) {
-        document.cookie = '__vexa_url=' + encodeURIComponent(href) + '; path=/; max-age=7200';
+      if (!href || !href.startsWith('http')) return;
+
+      document.cookie = '__vexa_url=' + encodeURIComponent(href) + '; path=/; max-age=7200';
+
+      let domHeadingText = '';
+      const titleSelectors = [
+        '.video-detail-intro-new h1',
+        '.video-detail-intro-new [class*="_titleBar_"]',
+        '[class*="introDetailWrap"] h1',
+        '[class*="introMain"] h1',
+        '[class*="video-detail-intro"] h1',
+        '[class*="_titleBar_"]',
+        'h1.video-title',
+        '.video-title',
+        '.player-title',
+        '.vod-title',
+        '.title-txt',
+        '[data-e2e="video-desc"]',
+        '[data-player-hook="video-title"]',
+        '.play-title',
+        '.v-panel-title',
+        '[class*="video-title"]',
+        '[class*="video_title"]',
+        '[class*="videoName"]',
+        '[class*="albumName"]',
+        'h1'
+      ];
+      for (const sel of titleSelectors) {
+        const el = document.querySelector(sel);
+        if (el && el.textContent) {
+          const t = el.textContent.trim();
+          if (t && t.length >= 2 && !t.includes('首页') && !t.includes('官网') && !t.includes('VIP') && !t.includes('会员') && !t.includes('频道')) {
+            domHeadingText = t;
+            break;
+          }
+        }
       }
 
-      // Active video & ID detection: strictly tracks the currently playing / centered video
-      if (document.querySelector('video')) {
+      const activeDescEl = document.querySelector('[data-e2e="video-desc"], .account-card-desc, .video-info-title');
+      const activeDesc = activeDescEl && activeDescEl.textContent ? activeDescEl.textContent.trim() : '';
+      const docTitle = document.title ? document.title.trim() : '';
+
+      const combined = [domHeadingText, activeDesc, docTitle, lastClickedTitle].filter(Boolean).join(' ||| ');
+      if (combined) {
+        document.cookie = '__vexa_title=' + encodeURIComponent(combined.slice(0, 300)) + '; path=/; max-age=7200';
+      }
+      reportSyncToVexa(href, combined);
+
+      const isFeedPlatform = Boolean(window.__VEXA_FEED_MAP__ && Object.keys(window.__VEXA_FEED_MAP__).length > 0)
+        || Boolean(window.location.search.includes('modal_id=') || window.location.pathname.includes('/video/'));
+      if (isFeedPlatform && document.querySelector('video')) {
         const vids = Array.from(document.querySelectorAll('video'));
         let activeVideo = vids.find(v => !v.paused && v.currentTime > 0);
         if (!activeVideo) {
@@ -166,30 +248,30 @@ const WEBVIEW_BRIDGE_SCRIPT: &str = r#"
             || document.querySelector('[data-e2e="video-item"]');
         }
 
-        let awemeId = '';
+        let mediaId = '';
         const mUrl = window.location.pathname.match(/\/video\/(\d+)/)
           || window.location.search.match(/modal_id=(\d+)/)
-          || window.location.search.match(/aweme_id=(\d+)/);
+          || window.location.search.match(/[?&][^=]*_?id=(\d{16,21})/);
         if (mUrl && mUrl[1]) {
-          awemeId = mUrl[1];
+          mediaId = mUrl[1];
         }
 
-        if (!awemeId && activeCard) {
+        if (!mediaId && activeCard) {
           let curr = activeCard;
           while (curr && curr !== document.body) {
-            for (const attr of ['data-e2e-vid', 'data-e2e-aweme-id', 'data-aweme-id', 'aweme-id']) {
+            for (const attr of ['data-e2e-vid', 'data-video-id', 'data-item-id', 'data-id', 'data-vid']) {
               const val = curr.getAttribute && curr.getAttribute(attr);
               if (val && /^\d+$/.test(val)) {
-                awemeId = val;
+                mediaId = val;
                 break;
               }
             }
-            if (awemeId) break;
-            const a = curr.querySelector && curr.querySelector('a[href*="/video/"], a[href*="modal_id="], a[href*="aweme_id="]');
+            if (mediaId) break;
+            const a = curr.querySelector && curr.querySelector('a[href*="/video/"], a[href*="modal_id="], a[href*="id="]');
             if (a && a.href) {
-              const m = a.href.match(/\/video\/(\d+)/) || a.href.match(/modal_id=(\d+)/) || a.href.match(/aweme_id=(\d+)/);
+              const m = a.href.match(/\/video\/(\d+)/) || a.href.match(/modal_id=(\d+)/) || a.href.match(/[?&][^=]*_?id=(\d{16,21})/);
               if (m && m[1]) {
-                awemeId = m[1];
+                mediaId = m[1];
                 break;
               }
             }
@@ -197,24 +279,25 @@ const WEBVIEW_BRIDGE_SCRIPT: &str = r#"
           }
         }
 
-        if (!awemeId && activeCard && window.__VEXA_FEED_MAP__) {
+        if (!mediaId && activeCard && window.__VEXA_FEED_MAP__) {
           const descEl = activeCard.querySelector('[data-e2e="video-desc"], .title, h1');
           const descText = descEl ? descEl.textContent.trim() : '';
           if (descText) {
             for (const [id, item] of Object.entries(window.__VEXA_FEED_MAP__)) {
               if (item.title && (descText.includes(item.title) || item.title.includes(descText))) {
-                awemeId = id;
+                mediaId = id;
                 break;
               }
             }
           }
         }
 
-        if (awemeId) {
-          const videoUrl = window.location.origin + '/video/' + awemeId;
+        if (mediaId) {
+          const videoUrl = window.location.origin + '/video/' + mediaId;
           document.cookie = '__vexa_url=' + encodeURIComponent(videoUrl) + '; path=/; max-age=7200';
-          if (window.__VEXA_FEED_MAP__ && window.__VEXA_FEED_MAP__[awemeId]) {
-            const item = window.__VEXA_FEED_MAP__[awemeId];
+          reportSyncToVexa(videoUrl);
+          if (window.__VEXA_FEED_MAP__ && window.__VEXA_FEED_MAP__[mediaId]) {
+            const item = window.__VEXA_FEED_MAP__[mediaId];
             if (item.playUrl) {
               document.cookie = '__vexa_media_src=' + encodeURIComponent(item.playUrl) + '; path=/; max-age=7200';
             }
@@ -223,24 +306,9 @@ const WEBVIEW_BRIDGE_SCRIPT: &str = r#"
             }
           }
         }
-        return; // Early return for feed media: never run generic HTML5 video sniffing that can grab prefetch buffers!
+        return;
       }
 
-      const domHeading = document.querySelector(
-        'h1.video-title, .video-title, .player-title, .vod-title, .title-txt, [data-e2e="video-desc"], [data-player-hook="video-title"], .play-title, .v-panel-title, [class*="video-title"], [class*="video_title"], [class*="videoName"], [class*="albumName"], h1'
-      );
-      const hText = domHeading && domHeading.textContent ? domHeading.textContent.trim() : '';
-      // Check active social video descriptions
-      const activeDescEl = document.querySelector('[data-e2e="video-desc"], .account-card-desc, .video-info-title');
-      const activeDesc = activeDescEl && activeDescEl.textContent ? activeDescEl.textContent.trim() : '';
-
-      const docTitle = document.title ? document.title.trim() : '';
-      const combined = [activeDesc, hText, docTitle, lastClickedTitle].filter(Boolean).join(' ||| ');
-      if (combined) {
-        document.cookie = '__vexa_title=' + encodeURIComponent(combined.slice(0, 300)) + '; path=/; max-age=7200';
-      }
-
-      // Sniff active HTML5 video tag currentSrc or src (prioritize currently playing or visible)
       const vids = Array.from(document.querySelectorAll('video'));
       let targetVid = vids.find(v => !v.paused && v.currentTime > 0);
       if (!targetVid) {
@@ -269,7 +337,6 @@ const WEBVIEW_BRIDGE_SCRIPT: &str = r#"
     } catch (_) {}
   };
 
-  // Helper to test if a URL is a custom app deep link scheme
   const isDisallowedScheme = function(u) {
     if (!u || typeof u !== 'string') return false;
     const trimmed = u.trim().toLowerCase();
@@ -278,7 +345,6 @@ const WEBVIEW_BRIDGE_SCRIPT: &str = r#"
     return true;
   };
 
-  // Keep target="_blank" and window.open links inside the embedded official webview & block scheme jumps
   window.open = function(url) {
     if (isDisallowedScheme(url)) {
       return null;
@@ -314,7 +380,6 @@ const WEBVIEW_BRIDGE_SCRIPT: &str = r#"
   document.addEventListener('mousedown', keepLinkInSameView, true);
   document.addEventListener('click', keepLinkInSameView, true);
 
-  // Block hidden iframe deep links
   try {
     const origSetAttribute = Element.prototype.setAttribute;
     Element.prototype.setAttribute = function(name, val) {
@@ -325,7 +390,6 @@ const WEBVIEW_BRIDGE_SCRIPT: &str = r#"
     };
   } catch(_) {}
 
-  // Universal protocol guard: intercept programmatic navigation attempts to non-web schemes
   try {
     const origAssign = window.location.assign;
     if (origAssign) {
@@ -343,10 +407,8 @@ const WEBVIEW_BRIDGE_SCRIPT: &str = r#"
     }
   } catch(_) {}
 
-  // Automatically dismiss / auto-confirm "继续使用浏览器" and hide app drawers
   const dismissAppPopups = function() {
     try {
-      // 1. Auto click "继续使用浏览器", "留在网页", "网页播放", "取消"
       const STAY_ON_WEB_LABELS = [
         '继续使用浏览器', '继续浏览', '留在网页', '留在浏览器', '网页播放', '网页版播放', '不用了', '暂不打开'
       ];
@@ -359,7 +421,6 @@ const WEBVIEW_BRIDGE_SCRIPT: &str = r#"
         }
       }
 
-      // 2. Hide any fixed/sticky bottom container promoting APP downloads
       const candidates = document.querySelectorAll('div, section, footer, aside');
       for (const d of candidates) {
         const t = (d.innerText || '').trim();
@@ -378,7 +439,6 @@ const WEBVIEW_BRIDGE_SCRIPT: &str = r#"
     } catch(_) {}
   };
 
-  // Hide intrusive ad banners & persistent app open floating bars on video sites
   const injectCleanStyle = () => {
     if (document.getElementById('vexa-clean-style')) return;
     const style = document.createElement('style');
@@ -391,7 +451,6 @@ const WEBVIEW_BRIDGE_SCRIPT: &str = r#"
       .cupid-extend-bar, .ad-report, .v-p-ad {
         display: none !important;
       }
-      /* Generic mobile app download, callout & promo drawers */
       [class*="open-app" i], [class*="open_app" i], [class*="openapp" i],
       [class*="launch-app" i], [class*="launch-box" i], [class*="launch_box" i],
       [class*="download-app" i], [class*="download-bar" i], [class*="download_bar" i],
@@ -432,7 +491,6 @@ const WEBVIEW_BRIDGE_SCRIPT: &str = r#"
     window.addEventListener(evt, syncPageMetaCookie, { passive: true, capture: true });
   });
 
-  // Auto-skip pre-roll video ads if present & keep page meta synced & dismiss popups
   setInterval(() => {
     try {
       syncPageMetaCookie();
@@ -490,18 +548,54 @@ pub fn get_cached_media_src() -> String {
         .unwrap_or_default()
 }
 
+pub fn get_cached_title_for_platform(platform: &str) -> Option<String> {
+    if let Ok(map) = PLATFORM_CACHED_TITLES.lock() {
+        if let Some(t) = map.get(platform) {
+            let tr = t.trim();
+            if !tr.is_empty() {
+                return Some(tr.to_string());
+            }
+        }
+    }
+    None
+}
+
+pub fn set_cached_title_for_platform(platform: &str, t: &str) {
+    let tr = t.trim();
+    if !tr.is_empty() {
+        if let Ok(mut map) = PLATFORM_CACHED_TITLES.lock() {
+            map.insert(platform.to_string(), tr.to_string());
+        }
+        if let Ok(mut g) = LAST_WEBVIEW_TITLE.lock() {
+            *g = tr.to_string();
+        }
+    }
+}
+
 fn set_cached_url(u: &str) {
     if !u.is_empty() && (u.starts_with("http://") || u.starts_with("https://")) {
         if let Ok(mut g) = LAST_WEBVIEW_URL.lock() {
             *g = u.to_string();
         }
+        let (plat, _) = detect_platform_from_url(u);
+        if let Ok(mut map) = PLATFORM_CACHED_URLS.lock() {
+            map.insert(plat, u.to_string());
+        }
     }
 }
 
 fn set_cached_title(t: &str) {
-    if !t.trim().is_empty() {
+    let tr = t.trim();
+    if !tr.is_empty() {
         if let Ok(mut g) = LAST_WEBVIEW_TITLE.lock() {
-            *g = t.trim().to_string();
+            *g = tr.to_string();
+        }
+        let cur_url = get_cached_url();
+        let (plat, _) = detect_platform_from_url(&cur_url);
+        if !plat.is_empty() {
+            if let Ok(mut map) = PLATFORM_CACHED_TITLES.lock() {
+                map.insert(plat, tr.to_string());
+            }
         }
     }
 }
@@ -514,18 +608,25 @@ pub fn set_cached_media_src(s: &str) {
     }
 }
 
-/// Syncs cookies from the embedded official website Webview to Vexa's local extractor/downloader cookie store.
-/// IMPORTANT: Must only be called from a background thread (never from main-thread WKNavigationDelegate callbacks).
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn sync_webview_cookies(app: &AppHandle) {
     let Some(wv) = get_active_child_webview(app) else {
         return;
     };
-    let url_str = get_cached_url();
-    let Ok(parsed_url) = tauri::Url::parse(&url_str) else {
-        return;
+    let parsed_url = if let Ok(u) = wv.url() {
+        if u.as_str().starts_with("http") && !u.as_str().contains("about:blank") {
+            u
+        } else {
+            let url_str = get_cached_url();
+            let Ok(p) = tauri::Url::parse(&url_str) else { return; };
+            p
+        }
+    } else {
+        let url_str = get_cached_url();
+        let Ok(p) = tauri::Url::parse(&url_str) else { return; };
+        p
     };
-    let (platform, domain) = detect_platform_from_url(&url_str);
+    let (platform, domain) = detect_platform_from_url(parsed_url.as_str());
 
     if let Ok(cookies) = wv.cookies_for_url(parsed_url) {
         if !cookies.is_empty() {
@@ -535,7 +636,7 @@ pub fn sync_webview_cookies(app: &AppHandle) {
                 let val = c.value();
                 if name == "__vexa_title" {
                     if let Ok(decoded) = urlencoding::decode(val) {
-                        set_cached_title(&decoded);
+                        set_cached_title_for_platform(&platform, &decoded);
                     }
                     continue;
                 }
@@ -574,11 +675,6 @@ pub fn sync_webview_cookies(app: &AppHandle) {
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub fn sync_webview_cookies(_app: &AppHandle) {}
 
-/// Computes exact logical bounds inside the window's content NSView.
-/// On macOS, `window.inner_size()` (`ns_view.frame().size.height`, e.g. 760) includes the native titlebar
-/// height (e.g. 32pt), whereas the main Webview's CSS viewport (`y + height`, e.g. 56 + 672 = 728) sits
-/// below the titlebar. Since `DiscoverView` extends to the bottom of the window (`origin.y = 0` in AppKit),
-/// its `wry` top-down Y coordinate inside `ns_view` is `win_h - ch` (e.g. 760 - 672 = 88 = 56 + 32).
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn resolve_aligned_bounds(
     app: &AppHandle,
@@ -599,20 +695,12 @@ fn resolve_aligned_bounds(
             let win_w = inner_logical.width.round();
             let win_h = inner_logical.height.round();
 
-            // When in desktop workbench mode (cx >= 100):
-            // Exactly preserves the original desktop anchoring logic
             if cx >= 100.0 {
                 let aligned_w = (win_w - cx).max(cw).max(10.0).round();
                 let aligned_y = (win_h - ch).max(y.round());
                 return (cx, aligned_y, aligned_w, ch);
             }
 
-            // When in mobile mode (cx < 100):
-            // On macOS, the window frame origin (0, 0) is at the top of the window frame,
-            // which includes the 28px native titlebar. In the DOM, getBoundingClientRect().top
-            // is measured relative to the webview document, which sits below the native titlebar.
-            // Therefore, we must add the titlebar height offset so that the child webview's top
-            // starts flush below the search & pill header instead of cutting into the pills.
             let titlebar_h = if let Some(css_h) = window_height {
                 let diff = win_h - css_h;
                 if diff > 10.0 && diff < 60.0 {
@@ -661,22 +749,69 @@ pub fn mount_or_update_platform_webview(
         DESKTOP_USER_AGENT
     };
 
-    if let Some(wv) = get_active_child_webview(app) {
-        let current_mode_is_mobile = CURRENT_WEBVIEW_IS_MOBILE.load(std::sync::atomic::Ordering::Relaxed);
-        if current_mode_is_mobile != is_mobile {
-            // Mode switched between mobile and desktop!
-            // Close existing webview so that a new one is created with the matching User-Agent.
-            let _ = wv.close();
-            if let Ok(mut label_guard) = CURRENT_WEBVIEW_LABEL.lock() {
-                label_guard.clear();
+    let current_mode_is_mobile = CURRENT_WEBVIEW_IS_MOBILE.load(std::sync::atomic::Ordering::Relaxed);
+    if current_mode_is_mobile != is_mobile {
+        CURRENT_WEBVIEW_IS_MOBILE.store(is_mobile, std::sync::atomic::Ordering::Relaxed);
+        if let Ok(mut pool) = PLATFORM_WEBVIEW_POOL.lock() {
+            for (_, label) in pool.drain() {
+                if let Some(wv) = app.get_webview(&label) {
+                    let _ = wv.close();
+                }
             }
-        } else {
-            if !visible || cw <= 10.0 || ch <= 10.0 {
-                let _ = wv.eval(
-                    "document.querySelectorAll('video, audio').forEach(el => { try { el.pause(); } catch(_){} });",
-                );
-                let _ = wv.hide();
-                return Ok(get_cached_url());
+        }
+        if let Ok(mut lru) = PLATFORM_LRU.lock() {
+            lru.clear();
+        }
+        if let Ok(mut label_guard) = CURRENT_WEBVIEW_LABEL.lock() {
+            label_guard.clear();
+        }
+    }
+
+    if !visible || cw <= 10.0 || ch <= 10.0 {
+        if let Ok(pool) = PLATFORM_WEBVIEW_POOL.lock() {
+            for (_, label) in pool.iter() {
+                if let Some(wv) = app.get_webview(label) {
+                    let _ = wv.eval(
+                        "document.querySelectorAll('video, audio').forEach(el => { try { el.pause(); } catch(_){} });",
+                    );
+                    let _ = wv.hide();
+                }
+            }
+        }
+        return Ok(get_cached_url());
+    }
+
+    let initial_url_str = url
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(get_cached_url);
+    let trimmed_initial = initial_url_str.trim().to_string();
+    let (platform_id, _) = detect_platform_from_url(&trimmed_initial);
+
+    if let Ok(pool) = PLATFORM_WEBVIEW_POOL.lock() {
+        for (plat, label) in pool.iter() {
+            if plat != &platform_id {
+                if let Some(wv) = app.get_webview(label) {
+                    let _ = wv.eval("document.querySelectorAll('video, audio').forEach(el => { try { el.pause(); } catch(_){} });");
+                    let _ = wv.hide();
+                }
+            }
+        }
+    }
+
+    let existing_label = {
+        let pool = PLATFORM_WEBVIEW_POOL.lock().unwrap_or_else(|e| e.into_inner());
+        pool.get(&platform_id).cloned()
+    };
+
+    if let Some(ref label) = existing_label {
+        if let Some(wv) = app.get_webview(label) {
+            if let Ok(mut lru) = PLATFORM_LRU.lock() {
+                lru.retain(|p| p != &platform_id);
+                lru.insert(0, platform_id.clone());
+            }
+            if let Ok(mut label_guard) = CURRENT_WEBVIEW_LABEL.lock() {
+                *label_guard = label.clone();
             }
 
             let _ = wv.set_bounds(Rect {
@@ -689,9 +824,10 @@ pub fn mount_or_update_platform_webview(
             if let Some(target_url) = url {
                 let trimmed = target_url.trim();
                 if !trimmed.is_empty() {
-                    if let Ok(parsed) = trimmed.parse::<tauri::Url>() {
-                        let current_str = get_cached_url();
-                        if current_str != trimmed {
+                    let cached = get_cached_url();
+                    let (cached_plat, _) = detect_platform_from_url(&cached);
+                    if cached_plat != platform_id {
+                        if let Ok(parsed) = trimmed.parse::<tauri::Url>() {
                             set_cached_url(trimmed);
                             let _ = wv.navigate(parsed);
                         }
@@ -703,31 +839,81 @@ pub fn mount_or_update_platform_webview(
         }
     }
 
-    if !visible || cw <= 10.0 || ch <= 10.0 {
-        return Ok(String::new());
+    let to_evict = {
+        let mut lru = PLATFORM_LRU.lock().unwrap_or_else(|e| e.into_inner());
+        let mut pool = PLATFORM_WEBVIEW_POOL.lock().unwrap_or_else(|e| e.into_inner());
+        let mut evict_label = None;
+        if pool.len() >= MAX_POOL_SIZE {
+            if let Some(oldest_plat) = lru.pop() {
+                if let Some(lbl) = pool.remove(&oldest_plat) {
+                    evict_label = Some(lbl);
+                }
+            }
+        }
+        evict_label
+    };
+    if let Some(lbl) = to_evict {
+        if let Some(wv) = app.get_webview(&lbl) {
+            let _ = wv.close();
+        }
     }
 
     let window = app
         .get_window("main")
         .ok_or_else(|| "Main window not found".to_string())?;
 
-    let initial_url_str = url
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "about:blank".to_string());
-    let trimmed_initial = initial_url_str.trim().to_string();
     set_cached_url(&trimmed_initial);
     let parsed_url = tauri::Url::parse(&trimmed_initial).map_err(|e| e.to_string())?;
 
     let gen = WEBVIEW_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let label = format!("platform-webview-{}", gen);
+    let label = format!("platform-webview-{}-{}", platform_id, gen);
 
     let app_handle_nav = app.clone();
     let app_handle_load = app.clone();
     let app_handle_new_win = app.clone();
+    let app_handle_res = app.clone();
 
     let builder = WebviewBuilder::new(&label, WebviewUrl::External(parsed_url))
         .user_agent(target_ua)
         .initialization_script(WEBVIEW_BRIDGE_SCRIPT)
+        .on_web_resource_request(move |req, res| {
+            if req.uri().host() == Some("vexa.internal") && req.uri().path() == "/sync" {
+                if let Some(query) = req.uri().query() {
+                    for param in query.split('&') {
+                        if let Some((k, v)) = param.split_once('=') {
+                            if let Ok(decoded) = urlencoding::decode(v) {
+                                if k == "url" {
+                                    let u_str = decoded.to_string();
+                                    set_cached_url(&u_str);
+                                    let (plat, _) = detect_platform_from_url(&u_str);
+                                    let _ = app_handle_res.emit(
+                                        "platform-webview-url",
+                                        BrowserStatePayload {
+                                            url: u_str,
+                                            platform: plat,
+                                        },
+                                    );
+                                } else if k == "title" {
+                                    set_cached_title(&decoded);
+                                } else if k == "media_src" {
+                                    set_cached_media_src(&decoded);
+                                }
+                            }
+                        }
+                    }
+                }
+                *res.status_mut() = tauri::http::StatusCode::OK;
+                res.headers_mut().insert(
+                    tauri::http::header::CONTENT_TYPE,
+                    tauri::http::HeaderValue::from_static("application/json"),
+                );
+                res.headers_mut().insert(
+                    tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                    tauri::http::HeaderValue::from_static("*"),
+                );
+                *res.body_mut() = std::borrow::Cow::Borrowed(b"{\"ok\":true}");
+            }
+        })
         .on_new_window(move |new_url, _features| {
             let u_str = new_url.to_string();
             if u_str.starts_with("http://") || u_str.starts_with("https://") {
@@ -797,6 +983,13 @@ pub fn mount_or_update_platform_webview(
         )
         .map_err(|e| e.to_string())?;
 
+    if let Ok(mut pool) = PLATFORM_WEBVIEW_POOL.lock() {
+        pool.insert(platform_id.clone(), label.clone());
+    }
+    if let Ok(mut lru) = PLATFORM_LRU.lock() {
+        lru.retain(|p| p != &platform_id);
+        lru.insert(0, platform_id);
+    }
     if let Ok(mut label_guard) = CURRENT_WEBVIEW_LABEL.lock() {
         *label_guard = label;
     }
@@ -870,13 +1063,34 @@ pub fn get_platform_webview_url(app: &AppHandle) -> Result<String, String> {
     if let Some(wv) = get_active_child_webview(app) {
         let _ = wv.eval("if (window.__VEXA_SYNC_ACTIVE__) window.__VEXA_SYNC_ACTIVE__();");
         std::thread::sleep(std::time::Duration::from_millis(60));
-        if let Ok(live) = wv.url() {
-            let s = live.to_string();
-            if !s.is_empty() {
-                set_cached_url(&s);
-            }
-        }
         sync_webview_cookies(app);
+
+        let cached = get_cached_url();
+        let wv_url_str = wv.url().ok().map(|u| u.to_string()).unwrap_or_default();
+
+        eprintln!("[VEXA_DEBUG] get_platform_webview_url: wv.url='{}', cached='{}'", wv_url_str, cached);
+
+        let is_concrete_page = |u: &str| -> bool {
+            if let Ok(parsed) = tauri::Url::parse(u) {
+                let p = parsed.path();
+                p.len() > 1 && p != "/index.html" && p != "/index.htm"
+            } else {
+                false
+            }
+        };
+
+        if is_concrete_page(&wv_url_str) {
+            set_cached_url(&wv_url_str);
+            return Ok(wv_url_str);
+        }
+
+        if is_concrete_page(&cached) {
+            return Ok(cached);
+        }
+
+        if !wv_url_str.is_empty() && (wv_url_str.starts_with("http://") || wv_url_str.starts_with("https://")) {
+            return Ok(wv_url_str);
+        }
     }
     Ok(get_cached_url())
 }

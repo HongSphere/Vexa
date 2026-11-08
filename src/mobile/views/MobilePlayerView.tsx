@@ -59,6 +59,7 @@ export const MobilePlayerView: React.FC = () => {
   const isIframe =
     activeSource?.sourceType === "jx_iframe" ||
     activeSource?.sourceType === "official_web";
+  const isJxIframe = activeSource?.sourceType === "jx_iframe";
 
   const [activeSubTab, setActiveSubTab] = useState<"episodes" | "sources" | "info">("sources");
   const [sourceFilter, setSourceFilter] = useState<"all" | "m3u8" | "jx" | "official">("all");
@@ -68,6 +69,7 @@ export const MobilePlayerView: React.FC = () => {
   const [iframeReloadKey, setIframeReloadKey] = useState(0);
   const [sniffedStreamUrl, setSniffedStreamUrl] = useState("");
   const [useNativeForSniffed, setUseNativeForSniffed] = useState(false);
+  const [isSniffing, setIsSniffing] = useState(false);
   const [showFsControls, setShowFsControls] = useState(true);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [iframeBrightness, setIframeBrightness] = useState(1);
@@ -210,14 +212,16 @@ export const MobilePlayerView: React.FC = () => {
   useEffect(() => {
     setSniffedStreamUrl("");
     setUseNativeForSniffed(false);
+    setIsSniffing(false);
+
     if (isIframe && iframeSrc) {
       setIsIframeLoading(true);
-      const timer = setTimeout(() => setIsIframeLoading(false), 3800);
+      const timer = setTimeout(() => setIsIframeLoading(false), 2500);
       return () => clearTimeout(timer);
     } else {
       setIsIframeLoading(false);
     }
-  }, [iframeSrc, isIframe, iframeReloadKey]);
+  }, [iframeSrc, isIframe, isJxIframe, iframeReloadKey]);
 
   const enterIframeFullscreen = async () => {
     setIsIframeFullscreen(true);
@@ -268,20 +272,22 @@ export const MobilePlayerView: React.FC = () => {
         typeof e.data.url === "string" &&
         e.data.url.startsWith("http")
       ) {
+        setIsSniffing(false);
         setIsIframeLoading(false);
-        setSniffedStreamUrl((prev) => prev || e.data.url);
+        setSniffedStreamUrl(e.data.url);
         setUseNativeForSniffed(true);
+        showToast("已成功嗅探原画切片，无缝接入原生播放器");
       }
     };
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [isIframeFullscreen]);
+  }, [isIframeFullscreen, showToast]);
 
   const sniffedFormat: VideoFormat | null = useMemo(() => {
     if (!sniffedStreamUrl) return null;
     return {
       formatId: "sniffed-hls",
-      qualityLabel: `${activeSource?.sourceName || "解析"} · 直连流`,
+      qualityLabel: "1080P 超清直连",
       height: 1080,
       fps: 30,
       ext: "m3u8",
@@ -292,7 +298,7 @@ export const MobilePlayerView: React.FC = () => {
       isHls: true,
       headers: {},
     };
-  }, [sniffedStreamUrl, activeSource?.sourceName]);
+  }, [sniffedStreamUrl]);
 
   const cycleNextParseLine = () => {
     const jxList = sourcesList.filter((s) => s.sourceType === "jx_iframe");
@@ -348,10 +354,9 @@ export const MobilePlayerView: React.FC = () => {
     };
   }, [isIframeFullscreen, iframeBrightness]);
 
-  // Default active tab based on episode count
   useEffect(() => {
     if (currentVideo) {
-      if ((currentVideo.episodes?.length || 0) > 1) {
+      if ((currentVideo.episodes?.length || 0) > 0) {
         setActiveSubTab("episodes");
       } else {
         setActiveSubTab("sources");
@@ -515,128 +520,181 @@ export const MobilePlayerView: React.FC = () => {
         }
       >
         {isIframe && !(useNativeForSniffed && sniffedFormat) ? (
-          <div
-            style={iframeContainerStyle}
-            onTouchStart={handleIframeTouchStart}
-            onTouchMove={handleIframeTouchMove}
-            onTouchEnd={handleIframeTouchEnd}
-            onClick={triggerControlsVisibility}
-            className={`w-full h-full bg-black relative ${
-              isIframeFullscreen ? "!w-full !h-full" : ""
-            }`}
-          >
-            <iframe
-              ref={iframeRef}
-              key={`${iframeSrc}-${iframeReloadKey}`}
-              src={iframeSrc}
-              title={activeSource?.sourceName || "播放器"}
-              onLoad={() => setIsIframeLoading(false)}
-              className="w-full h-full border-0"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-              allowFullScreen
-              sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
-            />
-            {gestureHud && (
-              <div className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none">
-                <div className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-black/85 backdrop-blur-md border border-white/15 text-white shadow-2xl text-sm font-bold tracking-wide">
-                  {gestureHud.icon === "sun" && <Sun className="w-5 h-5 text-amber-400" />}
-                  {gestureHud.icon === "volume" && <Volume2 className="w-5 h-5 text-sky-400" />}
-                  {gestureHud.icon === "forward" && <FastForward className="w-5 h-5 text-emerald-400" />}
-                  {gestureHud.icon === "rewind" && <Rewind className="w-5 h-5 text-amber-400" />}
-                  <span>{gestureHud.text}</span>
+          <>
+            {isSniffing ? (
+              <div className="w-full h-full bg-slate-950 flex flex-col items-center justify-center gap-3 px-4 text-center select-none relative">
+                <div className="w-10 h-10 rounded-full bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400">
+                  <Loader2 className="w-5 h-5 animate-spin" />
                 </div>
-              </div>
-            )}
-            {isIframeLoading && (
-              <div className="absolute inset-0 z-10 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center gap-2.5 px-4 text-center pointer-events-none">
-                <Loader2 className="w-6 h-6 text-sky-400 animate-spin" />
-                <div className="text-xs font-semibold text-white">
-                  正在连接「{activeSource?.sourceName || "解析专线"}」...
+                <div className="space-y-1">
+                  <div className="text-xs font-semibold text-slate-200">
+                    正在嗅探「{activeSource?.sourceName || "专线"}」原画切片...
+                  </div>
+                  <div className="text-[11px] text-slate-400">
+                    优先提取原生直链，畅享高清画质与原生手势体验
+                  </div>
                 </div>
-                <button
-                  onClick={cycleNextParseLine}
-                  className="pointer-events-auto mt-1 px-3 py-1 rounded-full bg-white/10 hover:bg-white/20 border border-white/20 text-[11px] text-slate-200 font-medium active:scale-95 transition-all"
-                >
-                  切换下一条解析线路
-                </button>
-              </div>
-            )}
-            {isIframeFullscreen ? (
-              <div
-                style={{
-                  top: "max(env(safe-area-inset-top, 0px), 12px)",
-                  left: "max(env(safe-area-inset-left, 0px), 12px)",
-                  right: "max(env(safe-area-inset-right, 0px), 12px)",
-                }}
-                className={`absolute z-50 flex items-center justify-between pointer-events-none transition-opacity duration-300 ${
-                  showFsControls ? "opacity-100" : "opacity-0"
-                }`}
-              >
-                <button
-                  id="vx-iframe-exit-fs-btn"
-                  onClick={exitIframeFullscreen}
-                  className="pointer-events-auto px-3 py-1.5 rounded-full bg-black/80 backdrop-blur-md border border-white/20 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xl active:scale-95 transition-all"
-                >
-                  <Minimize className="w-3.5 h-3.5" />
-                  <span>退出全屏</span>
-                </button>
-                <div className="flex items-center gap-1.5 pointer-events-auto">
-                  {sniffedFormat && (
+                <div className="flex items-center gap-2 mt-1">
+                  <button
+                    onClick={() => {
+                      setIsSniffing(false);
+                      setIsIframeLoading(false);
+                      showToast("已跳过嗅探，直接进入网页播放");
+                    }}
+                    className="px-2.5 py-1 rounded-full bg-white/10 hover:bg-white/20 text-slate-300 text-[11px] font-medium transition-all active:scale-95"
+                  >
+                    直接网页播放
+                  </button>
+                  {firstM3u8 && (
                     <button
-                      onClick={() => {
-                        exitIframeFullscreen();
-                        setUseNativeForSniffed(true);
-                        showToast("已切换至原生手势播放器");
-                      }}
-                      className="px-2.5 py-1.5 rounded-full bg-emerald-500/90 backdrop-blur-md border border-emerald-300/30 text-white text-xs font-semibold flex items-center gap-1 shadow-xl active:scale-95 transition-all"
+                      onClick={() => switchMediaSource(firstM3u8.sourceId)}
+                      className="px-2.5 py-1 rounded-full bg-sky-500/20 text-sky-400 text-[11px] font-medium transition-all active:scale-95"
                     >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>原生手势播</span>
+                      切至影视源
                     </button>
                   )}
-                  <button
-                    onClick={cycleNextParseLine}
-                    className="px-2.5 py-1.5 rounded-full bg-black/80 backdrop-blur-md border border-white/20 text-white text-xs font-semibold flex items-center gap-1 shadow-xl active:scale-95 transition-all"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    <span>换线</span>
-                  </button>
                 </div>
+
+                <iframe
+                  ref={iframeRef}
+                  key={`sniff-${iframeSrc}-${iframeReloadKey}`}
+                  src={iframeSrc}
+                  title="sniff-sandbox"
+                  style={{
+                    position: "absolute",
+                    width: 1,
+                    height: 1,
+                    opacity: 0,
+                    pointerEvents: "none",
+                  }}
+                  sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+                />
               </div>
             ) : (
               <div
-                className={`absolute top-2 right-2 z-20 flex items-center gap-1.5 transition-opacity duration-300 ${
-                  showFsControls ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+                style={iframeContainerStyle}
+                onTouchStart={handleIframeTouchStart}
+                onTouchMove={handleIframeTouchMove}
+                onTouchEnd={handleIframeTouchEnd}
+                onClick={triggerControlsVisibility}
+                className={`w-full h-full bg-black relative ${
+                  isIframeFullscreen ? "!w-full !h-full" : ""
                 }`}
               >
-                <button
-                  onClick={() => {
-                    setIframeReloadKey((k) => k + 1);
-                    showToast("正在重新加载当前线路...");
-                  }}
-                  className="px-2 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/15 text-white/90 text-[11px] font-medium flex items-center gap-1 shadow-md active:scale-95 transition-all"
-                  title="刷新线路"
-                >
-                  <RefreshCw className="w-3 h-3" />
-                  <span>刷新</span>
-                </button>
-                <button
-                  onClick={cycleNextParseLine}
-                  className="px-2 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/15 text-white/90 text-[11px] font-medium flex items-center gap-1 shadow-md active:scale-95 transition-all"
-                  title="切换下一条解析线路"
-                >
-                  <span>换线</span>
-                </button>
-                <button
-                  onClick={enterIframeFullscreen}
-                  className="px-2.5 py-1 rounded-full bg-sky-500/90 backdrop-blur-md border border-sky-300/30 text-white text-[11px] font-semibold flex items-center gap-1 shadow-md active:scale-95 transition-all"
-                >
-                  <Maximize className="w-3 h-3" />
-                  <span>全屏</span>
-                </button>
+                <iframe
+                  ref={iframeRef}
+                  key={`${iframeSrc}-${iframeReloadKey}`}
+                  src={iframeSrc}
+                  title={activeSource?.sourceName || "播放器"}
+                  onLoad={() => setIsIframeLoading(false)}
+                  className="w-full h-full border-0"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+                  allowFullScreen
+                  sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+                />
+                {gestureHud && (
+                  <div className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none">
+                    <div className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-black/85 backdrop-blur-md border border-white/15 text-white shadow-2xl text-sm font-bold tracking-wide">
+                      {gestureHud.icon === "sun" && <Sun className="w-5 h-5 text-amber-400" />}
+                      {gestureHud.icon === "volume" && <Volume2 className="w-5 h-5 text-sky-400" />}
+                      {gestureHud.icon === "forward" && <FastForward className="w-5 h-5 text-emerald-400" />}
+                      {gestureHud.icon === "rewind" && <Rewind className="w-5 h-5 text-amber-400" />}
+                      <span>{gestureHud.text}</span>
+                    </div>
+                  </div>
+                )}
+                {isIframeLoading && (
+                  <div className="absolute inset-0 z-10 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center gap-2.5 px-4 text-center pointer-events-none">
+                    <Loader2 className="w-6 h-6 text-sky-400 animate-spin" />
+                    <div className="text-xs font-semibold text-white">
+                      正在连接「{activeSource?.sourceName || "解析专线"}」...
+                    </div>
+                    <button
+                      onClick={cycleNextParseLine}
+                      className="pointer-events-auto mt-1 px-3 py-1 rounded-full bg-white/10 hover:bg-white/20 border border-white/20 text-[11px] text-slate-200 font-medium active:scale-95 transition-all"
+                    >
+                      切换下一条解析线路
+                    </button>
+                  </div>
+                )}
+                {isIframeFullscreen ? (
+                  <div
+                    style={{
+                      top: "max(env(safe-area-inset-top, 0px), 12px)",
+                      left: "max(env(safe-area-inset-left, 0px), 12px)",
+                      right: "max(env(safe-area-inset-right, 0px), 12px)",
+                    }}
+                    className={`absolute z-50 flex items-center justify-between pointer-events-none transition-opacity duration-300 ${
+                      showFsControls ? "opacity-100" : "opacity-0"
+                    }`}
+                  >
+                    <button
+                      id="vx-iframe-exit-fs-btn"
+                      onClick={exitIframeFullscreen}
+                      className="pointer-events-auto px-3 py-1.5 rounded-full bg-black/80 backdrop-blur-md border border-white/20 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xl active:scale-95 transition-all"
+                    >
+                      <Minimize className="w-3.5 h-3.5" />
+                      <span>退出全屏</span>
+                    </button>
+                    <div className="flex items-center gap-1.5 pointer-events-auto">
+                      {sniffedFormat && (
+                        <button
+                          onClick={() => {
+                            exitIframeFullscreen();
+                            setUseNativeForSniffed(true);
+                            showToast("已切换至原生手势播放器");
+                          }}
+                          className="px-2.5 py-1.5 rounded-full bg-emerald-500/90 backdrop-blur-md border border-emerald-300/30 text-white text-xs font-semibold flex items-center gap-1 shadow-xl active:scale-95 transition-all"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>原生手势播</span>
+                        </button>
+                      )}
+                      <button
+                        onClick={cycleNextParseLine}
+                        className="px-2.5 py-1.5 rounded-full bg-black/80 backdrop-blur-md border border-white/20 text-white text-xs font-semibold flex items-center gap-1 shadow-xl active:scale-95 transition-all"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>换线</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    className={`absolute top-2 right-2 z-20 flex items-center gap-1.5 transition-opacity duration-300 ${
+                      showFsControls ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+                    }`}
+                  >
+                    <button
+                      onClick={() => {
+                        setIframeReloadKey((k) => k + 1);
+                        showToast("正在重新加载当前线路...");
+                      }}
+                      className="px-2 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/15 text-white/90 text-[11px] font-medium flex items-center gap-1 shadow-md active:scale-95 transition-all"
+                      title="刷新线路"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      <span>刷新</span>
+                    </button>
+                    <button
+                      onClick={cycleNextParseLine}
+                      className="px-2 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/15 text-white/90 text-[11px] font-medium flex items-center gap-1 shadow-md active:scale-95 transition-all"
+                      title="切换下一条解析线路"
+                    >
+                      <span>换线</span>
+                    </button>
+                    <button
+                      onClick={enterIframeFullscreen}
+                      className="px-2.5 py-1 rounded-full bg-sky-500/90 backdrop-blur-md border border-sky-300/30 text-white text-[11px] font-semibold flex items-center gap-1 shadow-md active:scale-95 transition-all"
+                    >
+                      <Maximize className="w-3 h-3" />
+                      <span>全屏</span>
+                    </button>
+                  </div>
+                )}
               </div>
             )}
-          </div>
+          </>
         ) : (
           <MobileVideoPlayer
             video={currentVideo}
@@ -686,11 +744,11 @@ export const MobilePlayerView: React.FC = () => {
       )}
 
       {isIframe && !sniffedFormat && firstM3u8 && (
-        <div className="px-3.5 py-1.5 bg-sky-500/10 border-b border-sky-500/20 text-sky-500 text-xs flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-1.5 min-w-0 pr-2">
+        <div className="px-3 py-1.5 bg-sky-500/10 border-b border-sky-500/20 text-sky-500 text-xs flex items-center justify-between shrink-0 gap-2">
+          <div className="flex items-center gap-1.5 min-w-0 flex-1">
             <Zap className="w-3.5 h-3.5 shrink-0 text-sky-400" />
-            <span className="truncate text-[11px]">
-              检测到原生纯净线路【{firstM3u8.sourceName}】
+            <span className="text-[11px] font-medium truncate">
+              直连就绪：{firstM3u8.sourceName}
             </span>
           </div>
           <button
@@ -711,17 +769,17 @@ export const MobilePlayerView: React.FC = () => {
           <h1 className="text-[15px] font-bold text-slate-900 dark:text-white truncate tracking-tight">
             {currentVideo.title}
           </h1>
-          <div className="flex items-center gap-1.5 text-[11px] text-slate-400 dark:text-slate-500 mt-0.5 truncate">
-            <span className="px-1.5 py-0.5 rounded-md bg-sky-500/10 text-sky-600 dark:text-sky-400 font-semibold text-[10px]">
+          <div className="flex items-center gap-1.5 text-[11px] text-slate-400 dark:text-slate-500 mt-0.5 flex-wrap">
+            <span className="px-1.5 py-0.5 rounded-md bg-sky-500/10 text-sky-600 dark:text-sky-400 font-semibold text-[10px] shrink-0">
               {currentVideo.platformName}
             </span>
             {activeSource && (
-              <span className="truncate max-w-[150px] text-emerald-600 dark:text-emerald-400 font-medium">
+              <span className="text-emerald-600 dark:text-emerald-400 font-medium text-[11px] truncate max-w-[280px]">
                 {activeSource.sourceName}
               </span>
             )}
             {currentVideo.duration ? (
-              <span>· {formatDuration(currentVideo.duration)}</span>
+              <span className="shrink-0">· {formatDuration(currentVideo.duration)}</span>
             ) : null}
           </div>
         </div>
@@ -771,7 +829,7 @@ export const MobilePlayerView: React.FC = () => {
 
       {/* Segmented Controls for Sub-views (Single-line guarantee with whitespace-nowrap) */}
       <div className="flex items-center justify-around border-b border-black/[0.06] dark:border-white/[0.08] px-2 shrink-0 bg-white/75 dark:bg-[#0c0f17]/80 backdrop-blur-md">
-        {episodeCount > 1 && (
+        {episodeCount > 0 && (
           <button
             onClick={() => setActiveSubTab("episodes")}
             className={`py-2 px-3 text-xs font-semibold whitespace-nowrap relative transition-colors ${
@@ -818,19 +876,18 @@ export const MobilePlayerView: React.FC = () => {
 
       {/* Sub-view Content Area */}
       <div className="flex-1 overflow-y-auto p-3 space-y-3">
-        {/* Episodes Grid (Only shown when multiple episodes exist) */}
-        {activeSubTab === "episodes" && episodeCount > 1 && (
+        {activeSubTab === "episodes" && episodeCount > 0 && (
           <div className="grid grid-cols-4 gap-2">
             {currentVideo.episodes?.map((ep, idx) => {
-              const isCurrent =
-                ep.index === currentVideo.currentEpisodeIndex;
+              const activeEpIndex = currentVideo.currentEpisodeIndex || 1;
+              const isCurrent = (ep.index || idx + 1) === activeEpIndex;
               return (
                 <button
                   key={ep.index || idx}
                   onClick={() => switchEpisode(ep)}
                   className={`h-9 px-1 rounded-xl text-xs font-semibold transition-all active:scale-95 text-center truncate ${
                     isCurrent
-                      ? "bg-sky-500 text-white shadow-sm shadow-sky-500/30 font-bold"
+                      ? "bg-sky-500 text-white shadow-sm shadow-sky-500/30 font-bold ring-2 ring-sky-400/30"
                       : "bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.05] dark:border-white/[0.07] text-slate-700 dark:text-slate-300 hover:bg-black/[0.06] dark:hover:bg-white/[0.08]"
                   }`}
                 >
@@ -923,31 +980,49 @@ export const MobilePlayerView: React.FC = () => {
                           )}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="text-xs font-semibold truncate flex items-center gap-1.5">
-                            <span className="truncate">{src.sourceName}</span>
-                            {isM3u8 && (
-                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 font-medium shrink-0">
-                                极速秒播
-                              </span>
-                            )}
-                            {isJx && (
-                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-medium shrink-0">
-                                解析专线
-                              </span>
-                            )}
-                            {(src.episodes?.length || 0) > 1 && (
-                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-sky-500/15 text-sky-600 dark:text-sky-400 font-medium shrink-0">
-                                {src.episodes?.length}集
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-[10px] text-slate-400 dark:text-slate-500 truncate mt-0.5">
-                            {isM3u8
-                              ? "纯净直连 · 零广告 · 原生手势播放器"
-                              : isJx
-                              ? "网页解析内嵌 · 支持提取直连流与横屏全屏"
-                              : "官方原网页预览"}
-                          </div>
+                          {(() => {
+                            const match = src.sourceName.match(/^(.*?)(?:\s*[(（](.*?)[)）])?$/);
+                            const mainTitle = match ? (match[1]?.trim() || src.sourceName) : src.sourceName;
+                            const subDesc = match ? (match[2]?.trim() || "") : "";
+
+                            return (
+                              <>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="text-xs font-bold text-slate-800 dark:text-slate-100">
+                                    {mainTitle}
+                                  </span>
+                                  {isM3u8 && (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 font-semibold shrink-0">
+                                      极速秒播
+                                    </span>
+                                  )}
+                                  {isJx && (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-semibold shrink-0">
+                                      解析专线
+                                    </span>
+                                  )}
+                                  {(src.episodes?.length || 0) > 1 && (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-600 dark:text-sky-400 font-medium shrink-0">
+                                      {src.episodes?.length}集
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-1 leading-normal">
+                                  {subDesc ? (
+                                    <span className="text-sky-600 dark:text-sky-400 font-medium">
+                                      {subDesc}
+                                    </span>
+                                  ) : isM3u8 ? (
+                                    <span>原生解码 · 高清流畅 · 手势交互</span>
+                                  ) : isJx ? (
+                                    <span>网页解析内嵌 · 支持提取直连流与全屏</span>
+                                  ) : (
+                                    <span>官方原网页直出</span>
+                                  )}
+                                </div>
+                              </>
+                            );
+                          })()}
                         </div>
                       </div>
                       {isSelected ? (

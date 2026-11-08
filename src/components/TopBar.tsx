@@ -76,10 +76,20 @@ export const TopBar: React.FC = () => {
     }
   };
 
-  const handleAdFreePlayCurrentPage = async () => {
+  const handlePlayCurrentPage = async () => {
     const liveUrl =
       (await getCurrentPlatformWebviewUrl()) || currentWebviewUrl;
-    if (!liveUrl) return;
+    if (!liveUrl || liveUrl === "about:blank" || !liveUrl.startsWith("http")) {
+      showToast("未检测到当前网页的有效视频链接，请等待页面加载完成");
+      return;
+    }
+    try {
+      const u = new URL(liveUrl);
+      if (u.pathname === "/" || u.pathname === "" || u.pathname === "/index.html") {
+        showToast("当前处于平台首页，请先点击进入具体的影片播放页后再点击「解析播放」");
+        return;
+      }
+    } catch (_) {}
     setCurrentWebviewUrl(liveUrl);
     await loadAndPlayUrl(liveUrl);
   };
@@ -90,7 +100,10 @@ export const TopBar: React.FC = () => {
     try {
       const liveUrl =
         (await getCurrentPlatformWebviewUrl()) || currentWebviewUrl;
-      if (!liveUrl) return;
+      if (!liveUrl || liveUrl === "about:blank" || !liveUrl.startsWith("http")) {
+        showToast("未检测到当前网页的有效视频链接");
+        return;
+      }
       setCurrentWebviewUrl(liveUrl);
       showToast("已将当前页面视频加入下载队列");
       const task = await startDownloadTask({
@@ -115,7 +128,6 @@ export const TopBar: React.FC = () => {
 
   return (
     <header className="h-14 shrink-0 vx-topbar backdrop-blur-md border-b px-3 flex items-center justify-between gap-2 select-none transition-colors duration-200 overflow-hidden">
-      {/* Left: 7 Major Platforms Official Website Tabs + Browser Controls */}
       <div className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden">
         {sites.length > 0 && (
           <div
@@ -152,7 +164,6 @@ export const TopBar: React.FC = () => {
           </div>
         )}
 
-        {/* Browser Controls when on Official Websites tab */}
         {sites.length > 0 && activeTab === "discover" && (
           <div className="flex items-center gap-0.5 p-1 rounded-xl vx-subtle border shrink-0">
             <button
@@ -187,7 +198,6 @@ export const TopBar: React.FC = () => {
         )}
       </div>
 
-      {/* Right: Context-Aware Actions */}
       {activeTab === "discover" ? (
         <div className="flex items-center gap-1.5 shrink-0">
           <button
@@ -201,7 +211,7 @@ export const TopBar: React.FC = () => {
           </button>
 
           <button
-            onClick={handleAdFreePlayCurrentPage}
+            onClick={handlePlayCurrentPage}
             disabled={isParsing}
             title="提取当前网页正在浏览的视频到播放器播放"
             className="px-2.5 py-1.5 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-1 shadow-sm transition-all active:scale-95 whitespace-nowrap"

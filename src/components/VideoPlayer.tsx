@@ -165,15 +165,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   }, [isFullscreen, shouldRotateLandscape]);
 
   const shortQualityLabel = useMemo(() => {
-    const lbl = format?.qualityLabel || "高清";
-    if (lbl.includes("4K") || lbl.includes("4k")) return "4K";
-    if (lbl.includes("1080P") || lbl.includes("1080p")) return "1080P";
-    if (lbl.includes("720P") || lbl.includes("720p")) return "720P";
-    if (lbl.includes("480P") || lbl.includes("480p")) return "480P";
+    const lbl = format?.qualityLabel || "超清";
+    if (lbl.includes("4K") || lbl.includes("4k")) return "4K 原画";
+    if (lbl.includes("1080P") || lbl.includes("1080p") || lbl.includes("1080")) return "1080P";
+    if (lbl.includes("720P") || lbl.includes("720p") || lbl.includes("720")) return "720P";
+    if (lbl.includes("480P") || lbl.includes("480p") || lbl.includes("480")) return "480P";
     if (lbl.includes("超清")) return "超清";
     if (lbl.includes("高清")) return "高清";
     if (lbl.includes("标清")) return "标清";
-    return lbl.slice(0, 5);
+    return lbl.length > 6 ? lbl.slice(0, 6) : lbl;
   }, [format]);
 
   // Mobile Touch Gestures State
@@ -828,24 +828,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* Top Overlay: Resolution & Ad-Free Status Badge */}
-      <div className="absolute top-4 left-4 right-4 flex items-center justify-between pointer-events-none z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-        <div className="flex items-center gap-2 bg-black/70 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-white/10">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="text-xs font-medium text-white">
-            {format?.qualityLabel || "超清"} · 高速直连
-          </span>
-          {video.authUsed === "official_login" ? (
-            <span className="text-[11px] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/30">
-              已登录会话
-            </span>
-          ) : (
-            <span className="text-[11px] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/30">
-              标准流媒体
-            </span>
-          )}
-        </div>
-      </div>
+
 
       {/* SponsorBlock Auto-Skip Notification Toast inside Player */}
       {/* Buffering Indicator */}
@@ -948,7 +931,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           {/* Main Controls Row */}
           <div className="flex items-center justify-between gap-1.5 sm:gap-2">
             {/* Left: Play/Pause, Next Episode, Volume, Time */}
-            <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
               <button
                 onClick={togglePlay}
                 className="w-7 h-7 sm:w-9 sm:h-9 rounded-lg bg-white/10 hover:bg-sky-500 text-white flex items-center justify-center transition-colors shrink-0"
@@ -973,7 +956,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               )}
 
               {/* Volume Control */}
-              <div className="hidden sm:flex items-center gap-1.5">
+              <div className="hidden sm:flex items-center gap-1.5 shrink-0">
                 <button
                   onClick={toggleMute}
                   className="p-1.5 text-slate-200 hover:text-white transition-colors"
@@ -997,7 +980,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               </div>
 
               {/* Time Display */}
-              <div className="text-[10px] sm:text-xs font-mono text-slate-300 ml-0.5 sm:ml-1 whitespace-nowrap">
+              <div className="text-[10px] sm:text-xs font-mono text-slate-300 ml-0.5 sm:ml-1 whitespace-nowrap shrink-0">
                 <span className="text-white font-semibold">
                   {formatDuration(currentTime)}
                 </span>
@@ -1139,25 +1122,22 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             )}
 
             {/* Resolution Switcher Button */}
-            <div className="relative">
+            <div className="relative shrink-0">
               <button
                 onClick={() => {
                   setShowQualityMenu(!showQualityMenu);
                   setShowSpeedMenu(false);
                   setShowDanmakuPopover(false);
                 }}
-                className={`rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/40 text-sky-200 font-semibold flex items-center transition-colors ${
+                className={`rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/40 text-sky-200 font-semibold flex items-center transition-colors shrink-0 ${
                   isMobile
                     ? "px-2 py-1 text-[11px] gap-1"
-                    : "px-3 py-1.5 text-xs gap-1.5"
+                    : "px-2.5 py-1.5 text-xs gap-1.5"
                 }`}
+                title="切换清晰度"
               >
                 <Sparkles className="w-3 h-3 text-sky-400 shrink-0" />
-                <span>
-                  {isMobile
-                    ? shortQualityLabel
-                    : `清晰度：${format?.qualityLabel || "480P 标清"}`}
-                </span>
+                <span className="whitespace-nowrap">{shortQualityLabel}</span>
               </button>
 
               {showQualityMenu && (

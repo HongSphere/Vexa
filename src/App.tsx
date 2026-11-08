@@ -19,6 +19,7 @@ export const App: React.FC = () => {
     upsertDownloadTask,
     settings,
     setCurrentWebviewUrl,
+    setPlatformHistoryUrl,
     loadSourcesConfig,
   } = useAppStore();
 
@@ -26,7 +27,6 @@ export const App: React.FC = () => {
     loadSourcesConfig().catch(() => {});
   }, [loadSourcesConfig]);
 
-  // Manage Light / Dark / System Theme Mode on document.documentElement
   useEffect(() => {
     const root = document.documentElement;
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
@@ -49,7 +49,6 @@ export const App: React.FC = () => {
     return () => mediaQuery.removeEventListener("change", applyTheme);
   }, [settings.themeMode]);
 
-  // Hide embedded child webview whenever user leaves the discover tab
   useEffect(() => {
     if (activeTab !== "discover") {
       actionPlatformWebview("hide").catch(() => {});
@@ -73,6 +72,9 @@ export const App: React.FC = () => {
     subscribePlatformWebviewUrl((payload) => {
       if (payload?.url) {
         setCurrentWebviewUrl(payload.url);
+        if (payload.platform) {
+          setPlatformHistoryUrl(payload.platform, payload.url);
+        }
       }
     }).then((fn) => {
       unlistenWvUrl = fn;

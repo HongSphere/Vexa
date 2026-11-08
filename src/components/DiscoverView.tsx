@@ -40,14 +40,24 @@ export const DiscoverView: React.FC = () => {
     [sites.length]
   );
 
-  // Hide webview if no sites configured
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const debouncedSyncBounds = useCallback(
+    (targetUrl?: string | null) => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = setTimeout(() => {
+        syncBoundsOnly(targetUrl);
+      }, 30);
+    },
+    [syncBoundsOnly]
+  );
+
   useEffect(() => {
     if (sites.length === 0) {
       actionPlatformWebview("hide").catch(() => {});
     }
   }, [sites.length]);
 
-  // Navigate immediately when user selects a platform tab or clicks home
   useEffect(() => {
     if (pendingWebviewNavUrl && sites.length > 0) {
       syncBoundsOnly(pendingWebviewNavUrl);
@@ -55,32 +65,28 @@ export const DiscoverView: React.FC = () => {
     }
   }, [pendingWebviewNavUrl, syncBoundsOnly, clearPendingWebviewNavUrl, sites.length]);
 
-  // Keep native child webview bounds synced on mount & window resize
   useEffect(() => {
     if (sites.length === 0) return;
     const el = containerRef.current;
     if (!el) return;
 
     syncBoundsOnly(pendingWebviewNavUrl ?? currentWebviewUrl);
-    const rafId = window.requestAnimationFrame(() => syncBoundsOnly(null));
-    const timerId = window.setTimeout(() => syncBoundsOnly(null), 120);
 
     const ro = new ResizeObserver(() => {
-      syncBoundsOnly(null);
+      debouncedSyncBounds(null);
     });
     ro.observe(el);
 
-    const handleWinResize = () => syncBoundsOnly(null);
+    const handleWinResize = () => debouncedSyncBounds(null);
     window.addEventListener("resize", handleWinResize);
 
     return () => {
-      window.cancelAnimationFrame(rafId);
-      window.clearTimeout(timerId);
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       ro.disconnect();
       window.removeEventListener("resize", handleWinResize);
       actionPlatformWebview("hide").catch(() => {});
     };
-  }, [syncBoundsOnly, sites.length]);
+  }, [syncBoundsOnly, debouncedSyncBounds, sites.length]);
 
   if (sites.length === 0) {
     return (

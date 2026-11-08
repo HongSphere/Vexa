@@ -11,6 +11,7 @@ import {
   Settings,
 } from "lucide-react";
 import { useAppStore } from "../../store/useAppStore";
+import { getLatestBrowsedUrl } from "../../services/api";
 
 export const MobileDiscoverView: React.FC = () => {
   const {
@@ -44,13 +45,109 @@ export const MobileDiscoverView: React.FC = () => {
     currentSite?.homeUrl ||
     "";
 
+  const isGenericHomepageTitle = (title: string) => {
+    if (!title || !title.trim()) return true;
+    let clean = title.trim();
+    for (const site of sourcesConfig.sites || []) {
+      if (site.name) {
+        clean = clean.split(site.name).join("");
+      }
+    }
+    clean = clean
+      .replace(/在线视频|高清视频|首页|官网|官方网站|会员专区/gi, "")
+      .replace(/[_\-—|·\s\t\n\r]/g, "");
+    return clean.length === 0;
+  };
+
+  const isHomepageOrNonVideoUrl = (url: string, title?: string) => {
+    if (title && !isGenericHomepageTitle(title)) {
+      return false;
+    }
+
+    try {
+      const u = new URL(url);
+      const path = u.pathname.toLowerCase();
+      const search = u.search.toLowerCase();
+      const isRoot = path === "/" || path === "" || path === "/index.html" || path.endsWith("/channel");
+      const hasId = search.includes("id=") || search.includes("cid=") || search.includes("vid=");
+      const hasVideoPath = path.includes("/v_") || path.includes("/video") || path.includes("/cover/") || path.includes("/play") || path.includes("/b/") || path.includes("/note/");
+      if (isRoot && !hasId && !hasVideoPath) {
+        return true;
+      }
+    } catch {}
+    return false;
+  };
+
+  const isSpecificVideoUrl = (u?: string) => {
+    if (!u) return false;
+    const lower = u.toLowerCase();
+    return (
+      lower.includes("cid=") ||
+      lower.includes("vid=") ||
+      lower.includes("/cover/") ||
+      lower.includes("/play") ||
+      lower.includes("/v_") ||
+      lower.includes("/v_show/") ||
+      lower.includes("id_") ||
+      lower.includes("/a_") ||
+      lower.includes("/video/") ||
+      lower.includes("/b/") ||
+      lower.includes("/bangumi/") ||
+      lower.includes("modal_id=") ||
+      lower.includes("item_id=") ||
+      lower.includes("actv_aid=") ||
+      lower.includes("group_id=")
+    );
+  };
+
+  const getUrlRootDomain = (url?: string) => {
+    if (!url) return "";
+    try {
+      const hostname = new URL(url).hostname;
+      return hostname.split(".").slice(-2).join(".");
+    } catch {
+      return "";
+    }
+  };
+
   const handleParseOrSearch = async (val?: string) => {
-    const query = (val || currentWebviewUrl || rawTargetUrl || "").trim();
+    let query = (val || "").trim();
     if (!query) {
-      showToast("未检测到有效视频链接");
+      const latestProxyUrl = (await getLatestBrowsedUrl()).trim();
+      const currentSiteTarget = rawTargetUrl || currentSite?.mobileHomeUrl || currentSite?.homeUrl || "";
+      const currentSiteDomain = getUrlRootDomain(currentSiteTarget);
+
+      const isLatestMatchingSite =
+        !currentSiteDomain || getUrlRootDomain(latestProxyUrl) === currentSiteDomain;
+      const validLatestProxyUrl = isLatestMatchingSite ? latestProxyUrl : "";
+
+      if (isSpecificVideoUrl(validLatestProxyUrl)) {
+        query = validLatestProxyUrl;
+      } else if (isSpecificVideoUrl(currentWebviewUrl)) {
+        query = currentWebviewUrl.trim();
+      } else {
+        query = (currentWebviewUrl || validLatestProxyUrl || currentSiteTarget || "").trim();
+      }
+    }
+    if (!query || query === "about:blank") {
+      showToast("未检测到有效视频链接，请等待页面加载完成");
       return;
     }
-    await loadAndPlayUrl(query, 0, undefined, currentWebviewTitle);
+
+    let activeTitle = currentWebviewTitle;
+    try {
+      const docTitle = iframeRef.current?.contentDocument?.title;
+      if (docTitle && typeof docTitle === "string" && docTitle.trim()) {
+        activeTitle = docTitle.trim();
+        setCurrentWebviewTitle(activeTitle);
+      }
+    } catch {}
+
+    if (isHomepageOrNonVideoUrl(query, activeTitle)) {
+      showToast("当前处于平台首页，请先点击进入具体的影片播放页后再点击「解析本页」");
+      return;
+    }
+    await loadAndPlayUrl(query, 0, undefined, activeTitle);
   };
 
   const handleBack = () => {
@@ -80,7 +177,6 @@ export const MobileDiscoverView: React.FC = () => {
     return () => window.removeEventListener("message", handleMsg);
   }, [setCurrentWebviewUrl, activeInitialUrl]);
 
-  // Route through local proxy to strip X-Frame-Options & CSP frame-ancestors, preventing net::ERR_BLOCKED_BY_RESPONSE
   const iframeSrc = rawTargetUrl
     ? proxyPort
       ? `http://127.0.0.1:${proxyPort}/web?url=${encodeURIComponent(rawTargetUrl)}`
@@ -158,6 +254,7 @@ export const MobileDiscoverView: React.FC = () => {
                         setActivePlatform(site.id);
                         setActiveInitialUrl(targetUrl);
                         setCurrentWebviewUrl(targetUrl);
+                        setCurrentWebviewTitle("");
                         setHistoryDepth(1);
                         setViewMode("webview");
                       }}
@@ -194,7 +291,6 @@ export const MobileDiscoverView: React.FC = () => {
           )}
         </div>
       ) : (
-        /* In-App Direct Browser View */
         <div className="flex-1 w-full min-h-0 relative flex flex-col overflow-hidden bg-white dark:bg-[#07090e]">
           {/* Top In-App Browser Control Bar */}
           <div className="h-11 px-3 bg-white/95 dark:bg-[#0b0d13]/95 backdrop-blur-xl border-b border-black/[0.06] dark:border-white/[0.08] flex items-center justify-between gap-2 z-20 shrink-0">
@@ -246,9 +342,7 @@ export const MobileDiscoverView: React.FC = () => {
               </button>
 
               <button
-                onClick={() =>
-                  handleParseOrSearch(currentWebviewUrl || activeInitialUrl || rawTargetUrl)
-                }
+                onClick={() => handleParseOrSearch()}
                 disabled={isParsing}
                 className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 active:from-sky-600 active:to-blue-700 text-white text-xs font-bold flex items-center gap-1 shadow-sm active:scale-95 disabled:opacity-50 transition-all shrink-0"
               >
@@ -267,7 +361,7 @@ export const MobileDiscoverView: React.FC = () => {
             <div className="flex-1 w-full min-h-0 relative flex flex-col">
               <iframe
                 ref={iframeRef}
-                key={activePlatform || "webview"}
+                key={`${activePlatform || "webview"}_${activeInitialUrl}`}
                 src={iframeSrc}
                 title={currentSite?.name || "站点视口"}
                 referrerPolicy="no-referrer"

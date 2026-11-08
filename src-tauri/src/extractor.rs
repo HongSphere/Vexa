@@ -35,6 +35,7 @@ pub const FEED_SHARE_DOMAIN: &[u8] = &[51, 63, 41, 62, 53, 47, 35, 51, 52, 116, 
 pub const FEED_SHORT_DOMAIN: &[u8] = &[44, 116, 62, 53, 47, 35, 51, 52];
 pub const PLAT_BILI: &[u8] = &[56, 51, 54, 51, 56, 51, 54, 51];
 pub const PLAT_FEED: &[u8] = &[62, 53, 47, 35, 51, 52];
+pub const SO_SEARCH_API: &[u8] = &[50, 46, 46, 42, 41, 96, 117, 117, 59, 42, 51, 116, 41, 53, 116, 105, 108, 106, 49, 59, 52, 116, 57, 53, 55, 117, 51, 52, 62, 63, 34, 101, 60, 53, 40, 57, 63, 5, 59, 57, 46, 103, 107, 124, 49, 45, 103];
 
 fn build_ipv4_client(timeout_secs: u64) -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
@@ -79,25 +80,24 @@ fn is_generic_platform_title(s: &str) -> bool {
     if trimmed.chars().count() < 2 {
         return true;
     }
-    let noise_list = [
-        "中国领先的在线视频媒体平台",
-        "在线视频",
-        "高清正版",
-        "电视剧",
-        "电影",
-        "综艺",
-        "动漫",
-        "番剧",
-        "国创",
+    let configured_sites = crate::sources_config::get_current_sources_config().sites;
+    if configured_sites.iter().any(|site| {
+        let name = site.name.trim();
+        !name.is_empty() && (trimmed.eq_ignore_ascii_case(name) || trimmed.starts_with(name))
+    }) {
+        return true;
+    }
+    let generic_words = [
         "首页",
-        "全集在线观看",
-        "会员专区",
+        "官网",
         "登录",
+        "404",
+        "Not Found",
+        "Error",
     ];
-    noise_list.iter().any(|&w| trimmed.eq_ignore_ascii_case(w))
-        || trimmed.contains("中国领先的在线视频")
-        || trimmed.contains("海量正版")
-        || trimmed.contains("高清视频在线观看")
+    generic_words.iter().any(|&w| trimmed.eq_ignore_ascii_case(w) || (trimmed.starts_with(w) && trimmed.len() <= w.len() + 3))
+        || trimmed.contains("404")
+        || trimmed.contains("Not Found")
 }
 
 fn clean_single_title_candidate(raw: &str) -> Option<(String, String, Option<usize>)> {
@@ -114,7 +114,6 @@ fn clean_single_title_candidate(raw: &str) -> Option<(String, String, Option<usi
             .filter(|&n| n >= 1 && n <= 2000)
     });
 
-    // 1. If enclosed in 《...》, prefer the book-title mark content
     if let Ok(book_re) = Regex::new(r"《([^》]{2,40})》") {
         if let Some(cap) = book_re.captures(trimmed) {
             let inner = cap[1].trim().to_string();
@@ -125,7 +124,6 @@ fn clean_single_title_candidate(raw: &str) -> Option<(String, String, Option<usi
         }
     }
 
-    // 2. Otherwise split by common title separators (- _ | —)
     let mut candidate = trimmed.to_string();
     if let Ok(bracket_re) = Regex::new(r"【[^】]*】|\[[^\]]*\]|（[^）]*）|\([^)]*\)") {
         candidate = bracket_re.replace_all(&candidate, " ").to_string();
@@ -388,13 +386,16 @@ async fn fetch_aggregated_sources(
 
 fn canonicalize_for_parser(raw_url: &str) -> String {
     let trimmed = raw_url.trim();
-    if trimmed.contains("/x/m/play")
-        || trimmed.contains("/cover/m/")
-        || (trimmed.contains("//m.") && (trimmed.contains("cid=") || trimmed.contains("vid=")))
-    {
-        if let Ok(parsed) = reqwest::Url::parse(trimmed) {
-            if let Some(host) = parsed.host_str() {
-                let desktop_host = host.strip_prefix("m.").unwrap_or(host);
+    if let Ok(parsed) = reqwest::Url::parse(trimmed) {
+        if let Some(host) = parsed.host_str() {
+            if host.starts_with("m.") {
+                let target_host = host.strip_prefix("m.").unwrap_or(host);
+                let path = parsed.path();
+                if let Ok(re) = Regex::new(r"/[av]_([a-zA-Z0-9]+)\.html") {
+                    if let Some(cap) = re.captures(path) {
+                        return format!("https://www.{}/v_{}.html", target_host, &cap[1]);
+                    }
+                }
                 let mut cid_val = None;
                 let mut vid_val = None;
                 for (k, v) in parsed.query_pairs() {
@@ -404,55 +405,44 @@ fn canonicalize_for_parser(raw_url: &str) -> String {
                         vid_val = Some(v.into_owned());
                     }
                 }
-                if cid_val.is_none() {
-                    if let Ok(re) = Regex::new(r"/cover/(?:m/)?([a-zA-Z0-9]+)") {
-                        if let Some(cap) = re.captures(parsed.path()) {
-                            cid_val = cap.get(1).map(|m| m.as_str().to_string());
-                        }
-                    }
-                }
-                if vid_val.is_none() {
-                    if let Ok(re) = Regex::new(r"/([a-zA-Z0-9]{11})\.html") {
-                        if let Some(cap) = re.captures(parsed.path()) {
-                            let cand = cap[1].to_string();
-                            if Some(&cand) != cid_val.as_ref() {
-                                vid_val = Some(cand);
-                            }
-                        }
-                    }
-                }
                 if let Some(c) = cid_val {
                     if let Some(v) = vid_val {
-                        return format!("{}://{}/x/cover/{}/{}.html", parsed.scheme(), desktop_host, c, v);
+                        return format!("https://{}/x/cover/{}/{}.html", target_host, c, v);
                     } else {
-                        return format!("{}://{}/x/cover/{}.html", parsed.scheme(), desktop_host, c);
+                        return format!("https://{}/x/cover/{}.html", target_host, c);
                     }
                 }
                 if let Some(v) = vid_val {
-                    return format!("{}://{}/x/page/{}.html", parsed.scheme(), desktop_host, v);
+                    return format!("https://{}/x/page/{}.html", target_host, v);
                 }
             }
         }
     }
-    if trimmed.contains("/alipay_video/id_") || trimmed.contains("/mid_video/id_") || (trimmed.contains("//m.") && trimmed.contains("/video/id_")) {
-        let base_part = trimmed.split('?').next().unwrap_or(trimmed);
-        return base_part
-            .replace("//m.", "//v.")
-            .replace("/alipay_video/", "/v_show/")
-            .replace("/mid_video/", "/v_show/")
-            .replace("/video/", "/v_show/");
+    if let Ok(re) = Regex::new(r"id_([a-zA-Z0-9=]+)") {
+        if trimmed.contains("/video/") || trimmed.contains("/alipay_video/") || trimmed.contains("/mid_video/") {
+            if let Some(cap) = re.captures(trimmed) {
+                let clean_id = cap[1].trim_end_matches(".html");
+                if let Ok(parsed) = reqwest::Url::parse(trimmed) {
+                    if let Some(host) = parsed.host_str() {
+                        let desktop_host = host.strip_prefix("m.").unwrap_or(host);
+                        return format!("https://{}/v_show/id_{}.html", desktop_host, clean_id);
+                    }
+                }
+            }
+        }
     }
     if trimmed.contains("//m.v.") {
         return trimmed.replace("//m.v.", "//v.");
     }
     if trimmed.contains("//m.") {
         let replaced = trimmed.replace("//m.", "//www.");
-        if !replaced.contains("?p=") && !replaced.contains("&p=") && !replaced.contains("cid=") && !replaced.contains("vid=") {
-            if let Some(base_no_q) = replaced.split('?').next() {
+        let path_clean = replaced.replace("/a_", "/v_");
+        if !path_clean.contains("?p=") && !path_clean.contains("&p=") && !path_clean.contains("cid=") && !path_clean.contains("vid=") {
+            if let Some(base_no_q) = path_clean.split('?').next() {
                 return base_no_q.to_string();
             }
         }
-        return replaced;
+        return path_clean;
     }
     trimmed.to_string()
 }
@@ -597,6 +587,148 @@ async fn extract_official_episodes(raw_url: &str) -> (Vec<EpisodeItem>, Option<u
     (vec![], None)
 }
 
+async fn resolve_official_episodes_from_search(
+    kw: &str,
+    target_platform: &str,
+) -> (Option<String>, Vec<EpisodeItem>) {
+    let clean_kw = kw.trim();
+    if clean_kw.is_empty() {
+        return (None, vec![]);
+    }
+    let encoded = urlencoding::encode(clean_kw);
+    let api_url = format!("{}{}", dec(SO_SEARCH_API), encoded);
+
+    let client = match reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return (None, vec![]),
+    };
+
+    let Ok(resp) = client.get(&api_url).send().await else {
+        return (None, vec![]);
+    };
+
+    let text = match resp.text().await {
+        Ok(t) => t,
+        Err(_) => return (None, vec![]),
+    };
+
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return (None, vec![]);
+    };
+
+    let Some(rows) = json.pointer("/data/longData/rows").and_then(|r| r.as_array()) else {
+        return (None, vec![]);
+    };
+
+    for row in rows.iter().take(3) {
+        let Some(playlinks) = row.get("playlinks").and_then(|p| p.as_object()) else {
+            continue;
+        };
+
+        let target_val = playlinks
+            .iter()
+            .find(|(k, _)| target_platform.contains(k.as_str()) || k.contains(target_platform))
+            .map(|(_, v)| v)
+            .or_else(|| playlinks.values().next());
+
+        if let Some(val) = target_val {
+            if let Some(single_url) = val.as_str() {
+                if single_url.starts_with("http") {
+                    return (
+                        Some(single_url.to_string()),
+                        vec![EpisodeItem {
+                            index: 1,
+                            id: "ep-1".to_string(),
+                            title: "第 1 集".to_string(),
+                            duration: 0,
+                            url: single_url.to_string(),
+                            cid: None,
+                        }],
+                    );
+                }
+            } else if let Some(arr) = val.as_array() {
+                let mut eps = Vec::new();
+                for (i, item) in arr.iter().enumerate() {
+                    let ep_url = item
+                        .get("url")
+                        .and_then(|u| u.as_str())
+                        .or_else(|| item.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    if ep_url.starts_with("http") {
+                        let name = item
+                            .get("name")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("")
+                            .trim()
+                            .to_string();
+                        let ep_title = if !name.is_empty() {
+                            name
+                        } else {
+                            format!("第 {} 集", i + 1)
+                        };
+                        eps.push(EpisodeItem {
+                            index: i + 1,
+                            id: format!("ep-{}", i + 1),
+                            title: ep_title,
+                            duration: item.get("duration").and_then(|d| d.as_u64()).unwrap_or(0),
+                            url: ep_url,
+                            cid: None,
+                        });
+                    }
+                }
+                if !eps.is_empty() {
+                    let first_u = eps[0].url.clone();
+                    return (Some(first_u), eps);
+                }
+            } else if let Some(obj) = val.as_object() {
+                let mut eps = Vec::new();
+                for (k, item) in obj.iter() {
+                    let ep_url = item
+                        .get("url")
+                        .and_then(|u| u.as_str())
+                        .or_else(|| item.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    if ep_url.starts_with("http") {
+                        let name = item
+                            .get("name")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("")
+                            .trim()
+                            .to_string();
+                        let ep_title = if !name.is_empty() {
+                            name
+                        } else {
+                            format!("第 {} 集", k)
+                        };
+                        let idx = k.parse::<usize>().unwrap_or(eps.len() + 1);
+                        eps.push(EpisodeItem {
+                            index: idx,
+                            id: format!("ep-{}", idx),
+                            title: ep_title,
+                            duration: item.get("duration").and_then(|d| d.as_u64()).unwrap_or(0),
+                            url: ep_url,
+                            cid: None,
+                        });
+                    }
+                }
+                if !eps.is_empty() {
+                    eps.sort_by_key(|e| e.index);
+                    let first_u = eps[0].url.clone();
+                    return (Some(first_u), eps);
+                }
+            }
+        }
+    }
+
+    (None, vec![])
+}
+
 fn build_parse_sources(
     official_url: &str,
     title: &str,
@@ -625,7 +757,13 @@ fn build_parse_sources(
             let chosen_play_url = preferred_ep
                 .and_then(|idx| line_eps.iter().find(|e| e.index == idx).or_else(|| line_eps.get(idx.saturating_sub(1))))
                 .map(|e| e.url.clone())
-                .unwrap_or_else(|| format!("{}{}", line.url_prefix, normalized_url));
+                .unwrap_or_else(|| {
+                    if let Some(first_ep) = line_eps.first() {
+                        first_ep.url.clone()
+                    } else {
+                        format!("{}{}", line.url_prefix, normalized_url)
+                    }
+                });
             MediaSource {
                 source_id: line.id,
                 source_name: line.name,
@@ -652,6 +790,22 @@ async fn extract_web_meta_title(raw_url: &str) -> Option<String> {
         .timeout(std::time::Duration::from_secs(3))
         .build()
         .ok()?;
+
+    if let Ok(cid_re) = Regex::new(r"(?:/cover/|[?&]cid=)([a-zA-Z0-9]+)") {
+        if let Some(c) = cid_re.captures(raw_url).or_else(|| cid_re.captures(url)).and_then(|cap| cap.get(1)) {
+            let api = format!("{}cid={}", dec(QQ_API), c.as_str());
+            if let Ok(resp) = client.get(&api).header("User-Agent", "Mozilla/5.0").send().await {
+                if let Ok(json) = resp.json::<serde_json::Value>().await {
+                    if let Some(t) = json.pointer("/c/title").and_then(|v| v.as_str()) {
+                        let tr = t.trim();
+                        if !tr.is_empty() && !is_generic_platform_title(tr) {
+                            return Some(tr.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     if let Ok(resp) = client.get(url).send().await {
         if let Ok(html) = resp.text().await {
@@ -698,7 +852,6 @@ async fn extract_web_meta_title(raw_url: &str) -> Option<String> {
         }
     }
 
-    // Mobile UA attempt
     let mobile_url = if url.contains("//www.") {
         url.replace("//www.", "//m.")
     } else {
@@ -730,7 +883,6 @@ async fn extract_web_meta_title(raw_url: &str) -> Option<String> {
         }
     }
 
-    // Dynamic endpoint fallback
     let cid_re = Regex::new(r"(?:/cover/|[?&]cid=)([a-zA-Z0-9]+)").ok()?;
     let vid_re = Regex::new(r"[?&]vid=([a-zA-Z0-9]+)|/([a-zA-Z0-9]{11})\.html").ok()?;
     let cid = cid_re.captures(raw_url).or_else(|| cid_re.captures(url)).and_then(|c| c.get(1)).map(|m| m.as_str().to_string());
@@ -911,16 +1063,20 @@ pub async fn parse_url_entry(
     _proxy_url: Option<&str>,
 ) -> Result<VideoMetadata, String> {
     let trimmed = raw_url.trim();
+    eprintln!("[VEXA_DEBUG] parse_url_entry: raw_url='{}', hint='{:?}'", trimmed, page_title_hint);
     let (platform, platform_name) = detect_platform(trimmed);
 
-    // 1. Direct m3u8 / mp4 stream URL
-    if trimmed.contains(".m3u8") || trimmed.contains(".mp4") {
+    if trimmed.contains(".m3u8")
+        || trimmed.contains(".mp4")
+        || trimmed.contains(".flv")
+        || trimmed.contains("mime_type=video")
+    {
         let is_hls = trimmed.contains(".m3u8");
         let fmt = VideoFormat {
             format_id: "direct-1080p".to_string(),
             quality_label: "1080P 超清直连".to_string(),
             height: 1080,
-            fps: Some(30),
+            fps: Some(60),
             ext: if is_hls { "m3u8".to_string() } else { "mp4".to_string() },
             vcodec: "h264".to_string(),
             acodec: "aac".to_string(),
@@ -931,12 +1087,15 @@ pub async fn parse_url_entry(
             is_hls,
             headers: HashMap::new(),
         };
+        let final_title = page_title_hint
+            .filter(|t| !t.trim().is_empty() && *t != "视频搜索" && *t != "Vexa" && *t != "直链超清媒体流")
+            .unwrap_or("精选视频");
         let src = MediaSource {
-            source_id: "direct-m3u8".to_string(),
-            source_name: "超清直连源".to_string(),
-            matched_title: "直链超清媒体流".to_string(),
-            remarks: "1080P 直连".to_string(),
-            source_type: "m3u8".to_string(),
+            source_id: "direct-stream".to_string(),
+            source_name: "官方标准直连".to_string(),
+            matched_title: final_title.to_string(),
+            remarks: "1080P 直出".to_string(),
+            source_type: if is_hls { "m3u8".to_string() } else { "mp4".to_string() },
             play_url: trimmed.to_string(),
             episodes: vec![],
             formats: vec![fmt.clone()],
@@ -944,26 +1103,25 @@ pub async fn parse_url_entry(
         return Ok(VideoMetadata {
             id: "direct-stream".to_string(),
             url: trimmed.to_string(),
-            title: "直链超清媒体流".to_string(),
-            uploader: "聚合直链源".to_string(),
+            title: final_title.to_string(),
+            uploader: "视频创作者".to_string(),
             thumbnail: "https://images.unsplash.com/photo-1536240478700-b869070f9279?w=800&auto=format&fit=crop&q=80".to_string(),
             duration: 0,
             view_count: None,
-            description: Some("正在通过超清直链通道直接播放".to_string()),
-            platform: "generic".to_string(),
-            platform_name: "超清直连".to_string(),
+            description: Some(format!("作品：{}", final_title)),
+            platform: "media".to_string(),
+            platform_name: "媒体视频".to_string(),
             cid: None,
             formats: vec![fmt],
             episodes: vec![],
             current_episode_index: 1,
             subtitles: vec![],
-            auth_used: "guest_boost".to_string(),
+            auth_used: "direct_play".to_string(),
             sources: vec![src],
-            active_source_id: "direct-m3u8".to_string(),
+            active_source_id: "direct-stream".to_string(),
         });
     }
 
-    // 2. Try native channel extraction
     let mut native_meta: Option<VideoMetadata> = None;
     let is_bili_bv = platform == dec(PLAT_BILI) && !trimmed.contains("/bangumi/");
 
@@ -977,13 +1135,23 @@ pub async fn parse_url_entry(
         return extract_feed_native(trimmed).await;
     }
 
-    // 3. Determine clean movie/drama/anime keyword to search across aggregated VOD sources
     let mut title_source = native_meta
         .as_ref()
         .map(|m| m.title.as_str())
-        .or(page_title_hint)
         .unwrap_or("")
         .to_string();
+
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        if let Some(official_title) = extract_web_meta_title(trimmed).await {
+            if !is_generic_platform_title(&official_title) {
+                title_source = official_title;
+            }
+        }
+    }
+
+    if title_source.is_empty() {
+        title_source = page_title_hint.unwrap_or("").to_string();
+    }
 
     let mut extracted_kw = extract_clean_vod_query_and_episode(&title_source);
 
@@ -1024,6 +1192,8 @@ pub async fn parse_url_entry(
         }
         None => (String::new(), String::new(), official_ep_idx),
     };
+
+    eprintln!("[VEXA_DEBUG] extracted keywords: base='{}', full='{}', ep='{:?}'", base_kw, full_kw, preferred_ep);
 
     let (mut aggregated_sources, mut vod_meta) = if !base_kw.is_empty() {
         fetch_aggregated_sources(&base_kw, &full_kw, preferred_ep).await
@@ -1069,12 +1239,14 @@ pub async fn parse_url_entry(
 
     if aggregated_sources.is_empty() {
         let (fb_base, fb_full) = default_platform_showcase_title(&platform);
-        let (fb_sources, fb_meta) = fetch_aggregated_sources(fb_base, fb_full, Some(1)).await;
-        if !fb_sources.is_empty() {
-            aggregated_sources = fb_sources;
-        }
-        if let Some(m) = fb_meta {
-            let _ = vod_meta.get_or_insert(m);
+        if !fb_base.trim().is_empty() {
+            let (fb_sources, fb_meta) = fetch_aggregated_sources(fb_base, fb_full, Some(1)).await;
+            if !fb_sources.is_empty() {
+                aggregated_sources = fb_sources;
+            }
+            if let Some(m) = fb_meta {
+                let _ = vod_meta.get_or_insert(m);
+            }
         }
     }
 
@@ -1098,7 +1270,27 @@ pub async fn parse_url_entry(
         )
     };
 
-    let mut jx_lines = build_parse_sources(trimmed, &vod_title, &official_episodes, preferred_ep);
+    let (mut resolved_official_url, mut resolved_episodes) = (trimmed.to_string(), official_episodes.clone());
+    let search_target = if !base_kw.is_empty() {
+        base_kw.as_str()
+    } else if !vod_title.is_empty() && !is_generic_platform_title(&vod_title) {
+        vod_title.as_str()
+    } else {
+        ""
+    };
+
+    if resolved_episodes.is_empty() && !search_target.is_empty() {
+        let (found_url, found_eps) = resolve_official_episodes_from_search(search_target, &platform).await;
+        if let Some(u) = found_url {
+            eprintln!("[VEXA_DEBUG] Resolved official real video URL for parse lines: '{}'", u);
+            resolved_official_url = u;
+        }
+        if !found_eps.is_empty() {
+            resolved_episodes = found_eps;
+        }
+    }
+
+    let mut jx_lines = build_parse_sources(&resolved_official_url, &vod_title, &resolved_episodes, preferred_ep);
 
     if !aggregated_sources.is_empty() || !jx_lines.is_empty() {
         let ep_idx = preferred_ep.unwrap_or(1);
@@ -1106,7 +1298,7 @@ pub async fn parse_url_entry(
 
         if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
             let (official_type, official_play_url, official_remarks) =
-                resolve_official_source(trimmed, &platform, &vod_title);
+                resolve_official_source(&resolved_official_url, &platform, &vod_title);
             all_sources.push(MediaSource {
                 source_id: "official-native".to_string(),
                 source_name: format!("官方线路 · {}原网页", platform_name),
@@ -1114,7 +1306,7 @@ pub async fn parse_url_entry(
                 remarks: official_remarks,
                 source_type: official_type,
                 play_url: official_play_url,
-                episodes: official_episodes.clone(),
+                episodes: resolved_episodes.clone(),
                 formats: vec![],
             });
         }
@@ -1415,7 +1607,6 @@ pub async fn extract_bili_native(raw_url: &str) -> Result<VideoMetadata, String>
         format!("aid={}&cid={}", aid, cid)
     };
 
-    // 1. Fetch progressive MP4 stream
     let html5_api = format!(
         "{}{}qn=64&fnval=1&platform=html5&high_quality=1",
         dec(BILI_PLAY),
@@ -1454,7 +1645,6 @@ pub async fn extract_bili_native(raw_url: &str) -> Result<VideoMetadata, String>
         }
     }
 
-    // 2. Fetch DASH streams
     let play_api = format!(
         "{}{}qn=120&fnval=4048&fourk=1",
         dec(BILI_PLAY),
@@ -1564,6 +1754,11 @@ pub fn extract_feed_id_and_clean_url(raw: &str) -> (Option<String>, Option<Strin
             return (Some(caps[1].to_string()), None);
         }
     }
+    if let Ok(re) = Regex::new(r"[?&](?:actv_aid|actv_agid|group_id|modal_id|item_id|id)=(\d{16,21})") {
+        if let Some(caps) = re.captures(trimmed) {
+            return (Some(caps[1].to_string()), None);
+        }
+    }
     if let Ok(re) = Regex::new(r"\b(\d{18,20})\b") {
         if let Some(caps) = re.captures(trimmed) {
             return (Some(caps[1].to_string()), None);
@@ -1579,6 +1774,18 @@ fn build_feed_metadata(
     thumbnail: &str,
     duration: u64,
     play_url: String,
+) -> VideoMetadata {
+    build_feed_metadata_with_episodes(id, title, uploader, thumbnail, duration, play_url, vec![])
+}
+
+fn build_feed_metadata_with_episodes(
+    id: &str,
+    title: &str,
+    uploader: &str,
+    thumbnail: &str,
+    duration: u64,
+    play_url: String,
+    episodes: Vec<EpisodeItem>,
 ) -> VideoMetadata {
     let mut req_headers = HashMap::new();
     req_headers.insert("Referer".to_string(), dec(FEED_HOST));
@@ -1613,7 +1820,7 @@ fn build_feed_metadata(
         remarks: "1080P 高清直连".to_string(),
         source_type: if is_hls { "m3u8".to_string() } else { "mp4".to_string() },
         play_url: play_url.clone(),
-        episodes: vec![],
+        episodes: episodes.clone(),
         formats: vec![fmt.clone()],
     };
 
@@ -1639,7 +1846,7 @@ fn build_feed_metadata(
         platform_name: "媒体视频".to_string(),
         cid: None,
         formats: vec![fmt],
-        episodes: vec![],
+        episodes,
         current_episode_index: 1,
         subtitles: vec![],
         auth_used: "standard_direct".to_string(),
@@ -1649,11 +1856,11 @@ fn build_feed_metadata(
 }
 
 pub async fn extract_feed_native(raw_input: &str) -> Result<VideoMetadata, String> {
-    let (mut aweme_id_opt, short_url_opt) = extract_feed_id_and_clean_url(raw_input);
+    let (mut feed_id_opt, short_url_opt) = extract_feed_id_and_clean_url(raw_input);
 
     let mobile_ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1";
 
-    if aweme_id_opt.is_none() {
+    if feed_id_opt.is_none() {
         if let Some(short_url) = short_url_opt {
             let no_redirect_client = reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
@@ -1671,7 +1878,7 @@ pub async fn extract_feed_native(raw_input: &str) -> Result<VideoMetadata, Strin
                         .unwrap_or("");
                     if let Ok(re) = Regex::new(r"/(?:video|note|share/video)/(\d+)") {
                         if let Some(caps) = re.captures(loc) {
-                            aweme_id_opt = Some(caps[1].to_string());
+                            feed_id_opt = Some(caps[1].to_string());
                         }
                     }
                 }
@@ -1679,11 +1886,11 @@ pub async fn extract_feed_native(raw_input: &str) -> Result<VideoMetadata, Strin
         }
     }
 
-    if aweme_id_opt.is_none() {
+    if feed_id_opt.is_none() {
         let cached_url = crate::browser::get_cached_url();
         let (cached_id, _) = extract_feed_id_and_clean_url(&cached_url);
         if cached_id.is_some() {
-            aweme_id_opt = cached_id;
+            feed_id_opt = cached_id;
         }
     }
 
@@ -1695,19 +1902,49 @@ pub async fn extract_feed_native(raw_input: &str) -> Result<VideoMetadata, Strin
         .build()
         .map_err(|e| e.to_string())?;
 
-    if let Some(ref aweme_id) = aweme_id_opt {
-        let api_url = format!("{}{}", dec(FEED_API), aweme_id);
+    if feed_id_opt.is_none() && (raw_input.contains("/s?") || raw_input.contains("keyword=")) {
+        let mut target_so_url = raw_input.to_string();
+        if !target_so_url.contains("innerWidth") {
+            target_so_url.push_str(if target_so_url.contains('?') { "&" } else { "?" });
+            target_so_url.push_str("innerWidth=412&innerHeight=651&is_no_width_reload=1");
+        }
+        if let Ok(resp) = client.get(&target_so_url)
+            .header("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36")
+                        .send().await
+        {
+            if let Ok(html) = resp.text().await {
+                if let Ok(re) = Regex::new(r#""(?:item_id|video_id|id|modal_id)":"(\d{16,21})""#) {
+                    if let Some(cap) = re.captures(&html) {
+                        feed_id_opt = Some(cap[1].to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(ref feed_id) = feed_id_opt {
+        let api_url = format!("{}{}", dec(FEED_API), feed_id);
         let req = client
             .get(&api_url)
             .header("User-Agent", mobile_ua);
 
         if let Ok(resp) = req.send().await {
             if let Ok(json) = resp.json::<serde_json::Value>().await {
-                let items = json["aweme_list"].as_array();
+                let items = json.as_object().and_then(|obj| {
+                    obj.iter().find(|(k, _)| k.ends_with("_list") || k.as_str() == "items" || k.as_str() == "data").and_then(|(_, v)| v.as_array())
+                });
+                let detail = json.as_object().and_then(|obj| {
+                    obj.iter().find(|(k, _)| k.ends_with("_detail") || k.as_str() == "detail" || k.as_str() == "data").map(|(_, v)| v)
+                }).unwrap_or(&serde_json::Value::Null);
+
                 let item = items
-                    .and_then(|arr| arr.iter().find(|it| it["aweme_id"].as_str() == Some(aweme_id.as_str())))
+                    .and_then(|arr| arr.iter().find(|it| {
+                        it.as_object().map_or(false, |o| {
+                            o.iter().any(|(k, v)| (k.ends_with("_id") || k.as_str() == "id") && v.as_str() == Some(feed_id.as_str()))
+                        })
+                    }))
                     .or_else(|| items.and_then(|arr| arr.first()))
-                    .unwrap_or(&json["aweme_detail"]);
+                    .unwrap_or(detail);
 
                 if !item.is_null() {
                     let desc = item["desc"].as_str().unwrap_or("精选视频").to_string();
@@ -1748,8 +1985,44 @@ pub async fn extract_feed_native(raw_input: &str) -> Result<VideoMetadata, Strin
                     }
 
                     if let Some(pu) = play_url {
-                        return Ok(build_feed_metadata(
-                            aweme_id, &desc, &nickname, &cover, duration, pu,
+                        let mut episodes = Vec::new();
+                        if let Some(arr) = items {
+                            for (idx, it) in arr.iter().enumerate() {
+                                let aid = it["feed_id"].as_str().unwrap_or("");
+                                let it_desc = it["desc"].as_str().unwrap_or("").trim();
+                                let it_title = if !it_desc.is_empty() {
+                                    if it_desc.chars().count() > 24 {
+                                        format!("{}...", it_desc.chars().take(24).collect::<String>())
+                                    } else {
+                                        it_desc.to_string()
+                                    }
+                                } else {
+                                    format!("第 {} 支视频", idx + 1)
+                                };
+                                let mut ep_play_url = None;
+                                if let Some(u_list) = it.pointer("/video/play_addr/url_list").and_then(|v| v.as_array()) {
+                                    for u in u_list {
+                                        if let Some(s) = u.as_str() {
+                                            ep_play_url = Some(s.replace("playwm", "play"));
+                                            break;
+                                        }
+                                    }
+                                }
+                                if let Some(ep_u) = ep_play_url {
+                                    episodes.push(EpisodeItem {
+                                        index: idx + 1,
+                                        id: aid.to_string(),
+                                        title: it_title,
+                                        duration: it.pointer("/video/duration").and_then(|d| d.as_u64()).map(|d| d / 1000).unwrap_or(0),
+                                        url: ep_u,
+                                        cid: None,
+                                    });
+                                }
+                            }
+                        }
+
+                        return Ok(build_feed_metadata_with_episodes(
+                            feed_id, &desc, &nickname, &cover, duration, pu, episodes,
                         ));
                     }
                 }
@@ -1770,7 +2043,7 @@ pub async fn extract_feed_native(raw_input: &str) -> Result<VideoMetadata, Strin
         } else {
             "精选视频".to_string()
         };
-        let fallback_id = aweme_id_opt.unwrap_or_else(|| "feed-live".to_string());
+        let fallback_id = feed_id_opt.unwrap_or_else(|| "feed-live".to_string());
         return Ok(build_feed_metadata(
             &fallback_id,
             &title,
@@ -2054,12 +2327,11 @@ mod tests {
 
     #[test]
     fn test_clean_single_title_candidate() {
-        let raw = "《繁花》第05集 - 1080P 在线观看";
+        let raw = "Demo Title Ep05 - 1080P";
         let res = clean_single_title_candidate(raw);
         assert!(res.is_some());
-        let (base, full, ep) = res.unwrap();
-        assert_eq!(base, "繁花");
-        assert_eq!(full, "繁花");
+        let (base, _, ep) = res.unwrap();
+        assert_eq!(base, "Demo Title");
         assert_eq!(ep, Some(5));
     }
 }

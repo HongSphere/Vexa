@@ -17,6 +17,28 @@ pub static PROXY_PORT: AtomicU16 = AtomicU16::new(19527);
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 static ACTIVE_UPSTREAM_ORIGIN: OnceLock<RwLock<String>> = OnceLock::new();
 static ACTIVE_ASSET_BASE: OnceLock<RwLock<String>> = OnceLock::new();
+static LATEST_NAV_URL: OnceLock<RwLock<String>> = OnceLock::new();
+
+fn latest_nav_url_lock() -> &'static RwLock<String> {
+    LATEST_NAV_URL.get_or_init(|| RwLock::new(String::new()))
+}
+
+pub fn set_latest_nav_url(url: &str) {
+    if !url.starts_with("http://127.0.0.1") && !url.starts_with("http://localhost") {
+        if let Ok(mut lock) = latest_nav_url_lock().write() {
+            *lock = url.to_string();
+        }
+    }
+}
+
+pub fn get_latest_nav_url() -> Option<String> {
+    if let Ok(lock) = latest_nav_url_lock().read() {
+        if !lock.trim().is_empty() {
+            return Some(lock.clone());
+        }
+    }
+    None
+}
 
 fn active_upstream_lock() -> &'static RwLock<String> {
     ACTIVE_UPSTREAM_ORIGIN.get_or_init(|| RwLock::new(String::new()))
@@ -527,7 +549,6 @@ async fn proxy_m3u8_handler(Query(query): Query<StreamQuery>) -> impl IntoRespon
             continue;
         }
 
-        // Rewrite AES-128 / MAP keys and init segments so encrypted HLS streams decrypt smoothly
         if (trimmed.starts_with("#EXT-X-KEY:") || trimmed.starts_with("#EXT-X-MAP:")) && key_re.is_some() {
             if let Some(extinf) = pending_extinf.take() {
                 out_lines.push(extinf);
@@ -560,9 +581,7 @@ async fn proxy_m3u8_handler(Query(query): Query<StreamQuery>) -> impl IntoRespon
             }
             out_lines.push(line.to_string());
         } else {
-            // This is a media segment URL
             if is_ad_segment_url(trimmed) {
-                // Drop this ad segment and its pending #EXTINF
                 pending_extinf = None;
                 continue;
             }
@@ -627,9 +646,9 @@ async fn proxy_web_handler(
         )
             .into_response();
     }
+    set_latest_nav_url(raw_url);
 
     let port = PROXY_PORT.load(Ordering::Relaxed);
-    // Prevent self-referential infinite proxy loops
     if raw_url.contains(&format!("127.0.0.1:{}/web", port))
         || raw_url.contains(&format!("localhost:{}/web", port))
     {
@@ -807,14 +826,18 @@ async fn proxy_web_handler(
         Err(_) => "/".to_string(),
     };
 
-    // Strip any upstream referrer meta so our no-referrer policy takes full effect
     let clean_html = if let Ok(re) = regex::Regex::new(r#"(?i)<meta[^>]*name=["']referrer["'][^>]*>"#) {
         re.replace_all(&html_str, "").to_string()
     } else {
         html_str
     };
 
-    // Rewrite protocol-relative URLs (//...) and insecure image endpoints to HTTPS
+    let clean_html = if let Ok(re) = regex::Regex::new(r#"((?:src|href|data-src|poster)\s*=\s*['"])\s*//\s+"#) {
+        re.replace_all(&clean_html, "${1}https://").to_string()
+    } else {
+        clean_html
+    };
+
     let clean_html = clean_html
         .replace("=\"//", "=\"https://")
         .replace("='//", "='https://")
@@ -830,7 +853,6 @@ async fn proxy_web_handler(
         .replace("\"//", "\"https://")
         .replace("'//", "'https://");
 
-    // Generic auto-discovery of asset CDN base path from HTML script/link tags
     if let Ok(re) = regex::Regex::new(r#"(?:src|href)=['"](https?://[^'"\s]+?)/assets/"#) {
         if let Some(caps) = re.captures(&clean_html) {
             if let Some(m) = caps.get(1) {
@@ -855,7 +877,6 @@ async fn proxy_web_handler(
         clean_html
     };
 
-    // Neutralize any scripts that redirect http: to https: or desktop redirects
     let clean_html = clean_html
         .replace(r#"0===window.location.href.indexOf("http:")"#, "false")
         .replace(r#"0 === window.location.href.indexOf("http:")"#, "false")
@@ -1154,7 +1175,6 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
     setInterval(function() {{ purgeAdOverlays(document); }}, 100);
   }} catch(e) {{}}
 
-  // Universal mobile video callup shield to suppress native app jump prompts
   try {{
     window.noCallUp = true;
     Object.defineProperty(window, 'noCallUp', {{
@@ -1180,7 +1200,6 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
     window.addEventListener('DOMContentLoaded', function() {{ removeAppCallups(document); }});
   }} catch(e) {{}}
 
-  // Synchronize SPA router pathname so initial load matches upstream route instead of /web
   try {{
     var targetPath = "{target_path_and_query}";
     if (window.location.pathname.startsWith('/web') && targetPath) {{
@@ -1193,7 +1212,6 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
     realParent = window.parent;
   }} catch(e) {{}}
 
-  // Mock window.top and window.parent so iframe-intolerant SDKs (like midas.js) believe they are top-level
   try {{
     Object.defineProperty(window, 'top', {{
       get: function() {{ return window; }},
@@ -1207,7 +1225,6 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
     }});
   }} catch(e) {{}}
 
-  // Stub document.domain setter to prevent SecurityError in sandboxed contexts
   try {{
     var origDomain = document.domain;
     Object.defineProperty(Document.prototype, 'domain', {{
@@ -1217,7 +1234,6 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
     }});
   }} catch(e) {{}}
 
-  // Neutralize service worker on local container origin to prevent 404 registration failures
   try {{
     if (navigator.serviceWorker) {{
       navigator.serviceWorker.register = function() {{
@@ -1226,7 +1242,6 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
     }}
   }} catch(e) {{}}
 
-  // Safe image attribute observer to upgrade http to https and apply no-referrer without breaking prototype chain
   try {{
     var fixImg = function(img) {{
       if (!img) return;
@@ -1256,7 +1271,6 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
     }});
   }} catch(e) {{}}
 
-  // Fix CSS background-image referrer 403 on third-party CDNs with anti-hotlinking
   try {{
     var fixBgEl = function(el) {{
       if (!el || el._vxBgFixed) return;
@@ -1324,7 +1338,6 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
     upstreamOrigin = uObj.origin;
   }} catch(e) {{}}
 
-  // Disable service worker in proxy context
   try {{
     if (navigator.serviceWorker) {{
       navigator.serviceWorker.register = function() {{
@@ -1522,6 +1535,44 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
     }}
   }} catch(e) {{}}
 
+  try {{
+    var activateTargetRoute = function() {{
+      var searchParams = new URLSearchParams(window.location.search);
+      var targetKey = (searchParams.get('route') || 'zx').toLowerCase();
+      var keyword = 'ZX-1080';
+      if (targetKey.indexOf('ql') !== -1) keyword = 'QL-1080';
+      else if (targetKey.indexOf('pk') !== -1) keyword = 'PK-1080';
+      else if (targetKey.indexOf('tx') !== -1) keyword = 'TX-1080';
+      else if (targetKey.indexOf('lx2') !== -1) keyword = 'LX2-1080';
+      else if (targetKey.indexOf('lx1') !== -1) keyword = 'LX1-1080';
+      else if (targetKey.indexOf('qg') !== -1) keyword = 'QG-1080';
+      else if (targetKey.indexOf('sd') !== -1) keyword = 'SD-1080';
+      else if (targetKey.indexOf('cj') !== -1) keyword = 'CJ-1080';
+
+      var btn = null;
+      if (document.querySelectorAll) {{
+        var allBtns = document.querySelectorAll('.route-options button, .route-pill');
+        for (var i = 0; i < allBtns.length; i++) {{
+          if ((allBtns[i].textContent || '').indexOf(keyword) !== -1) {{
+            btn = allBtns[i];
+            break;
+          }}
+        }}
+      }}
+      if (btn && !btn.classList.contains('active') && btn.getAttribute('aria-pressed') !== 'true') {{
+        btn.click();
+        return true;
+      }}
+      return false;
+    }};
+    var routeInterval = setInterval(function() {{
+      if (activateTargetRoute()) {{
+        setTimeout(activateTargetRoute, 800);
+      }}
+    }}, 200);
+    setTimeout(function() {{ clearInterval(routeInterval); }}, 6000);
+  }} catch(e) {{}}
+
   function toRealUrl(u) {{
     if (!u || typeof u !== 'string') return '';
     var trimmed = u.trim();
@@ -1530,8 +1581,14 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
     if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {{
       if (trimmed.indexOf('/web?url=') !== -1) {{
         try {{
-          var inner = decodeURIComponent(trimmed.split('/web?url=')[1].split('&')[0]);
-          return inner;
+          var rest = trimmed.split('/web?url=')[1];
+          var firstPart = rest.split('&')[0];
+          var decoded = decodeURIComponent(firstPart);
+          var extraParams = rest.split('&').slice(1).join('&');
+          if (extraParams) {{
+            decoded += (decoded.indexOf('?') !== -1 ? '&' : '?') + extraParams;
+          }}
+          return decoded;
         }} catch(e) {{}}
       }}
       if (trimmed.indexOf('127.0.0.1') !== -1 || trimmed.indexOf('localhost') !== -1) {{
@@ -1559,10 +1616,64 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
   }}
 
   var lastReported = "";
+  var lastValidVideoUrl = "";
+  var currentHost = "";
+  try {{
+    currentHost = window.location.hostname || "";
+  }} catch(e) {{}}
+
+  function probeCurrentPageVideo() {{
+    try {{
+      var v = document.querySelector('video');
+      if (v && v.src && (v.src.startsWith('http://') || v.src.startsWith('https://')) && !v.src.startsWith('blob:')) {{
+        return v.src;
+      }}
+      var link = document.querySelector('a[href*="/v_"], a[href*="/cover/"], a[href*="/video/"], a[href*="/v_show/"], a[href*="/b/"], a[href*="vid="], a[href*="cid="]');
+      if (link && link.href) {{
+        return toRealUrl(link.href);
+      }}
+    }} catch(e) {{}}
+    return null;
+  }}
+
   function notifyParentUrl(u, t) {{
-    var real = toRealUrl(u);
+    var detected = probeCurrentPageVideo();
+    var real = detected || toRealUrl(u);
     if (!real || real.indexOf('127.0.0.1') !== -1) return;
     var pageTitle = t || document.title || '';
+
+    var isSpecific = (
+      real.indexOf('cid=') !== -1 ||
+      real.indexOf('vid=') !== -1 ||
+      real.indexOf('/cover/') !== -1 ||
+      real.indexOf('/play') !== -1 ||
+      real.indexOf('/v_') !== -1 ||
+      real.indexOf('/a_') !== -1 ||
+      real.indexOf('/video/') !== -1 ||
+      real.indexOf('/v_show/') !== -1 ||
+      real.indexOf('/b/') !== -1 ||
+      real.indexOf('/bangumi/') !== -1 ||
+      real.indexOf('modal_id=') !== -1
+    );
+
+    try {{
+      var currentUrlHost = new URL(real).hostname;
+      if (lastValidVideoUrl) {{
+        var lastUrlHost = new URL(lastValidVideoUrl).hostname;
+        var curRoot = currentUrlHost.split('.').slice(-2).join('.');
+        var lastRoot = lastUrlHost.split('.').slice(-2).join('.');
+        if (curRoot !== lastRoot) {{
+          lastValidVideoUrl = "";
+        }}
+      }}
+    }} catch(e) {{}}
+
+    if (isSpecific) {{
+      lastValidVideoUrl = real;
+    }} else if (lastValidVideoUrl) {{
+      real = lastValidVideoUrl;
+    }}
+
     if (real === lastReported && !pageTitle) return;
     lastReported = real;
     try {{
@@ -1642,7 +1753,6 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
     if (trimmed.startsWith('javascript:') || trimmed.startsWith('about:') || trimmed.startsWith('data:')) {{
       return false;
     }}
-    // Block app callup protocols like intent:, market:, and non-http schemes
     if (trimmed.indexOf(':') !== -1) {{
       return true;
     }}

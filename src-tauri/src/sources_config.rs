@@ -57,7 +57,7 @@ pub struct SourcesConfig {
     pub name: Option<String>,
     #[serde(default)]
     pub sites: Vec<SiteConfig>,
-    #[serde(default)]
+    #[serde(default, alias = "videoSources")]
     pub vod_providers: Vec<VodProviderConfig>,
     #[serde(default)]
     pub parse_lines: Vec<ParseLineConfig>,
@@ -101,24 +101,15 @@ pub fn get_config_file_path() -> PathBuf {
 pub fn load_sources_config_from_disk() -> SourcesConfig {
     let path = get_config_file_path();
     const DEFAULT_SOURCES_JSON: &str = include_str!("../../sources.sample.json");
-    let default_cfg = serde_json::from_str::<SourcesConfig>(DEFAULT_SOURCES_JSON).ok();
 
     if path.exists() {
         if let Ok(content) = fs::read_to_string(&path) {
             if let Ok(cfg) = serde_json::from_str::<SourcesConfig>(&content) {
-                // If disk version is older or different than built-in version, refresh with new default config
-                if let Some(ref def) = default_cfg {
-                    if cfg.version != def.version {
-                        let _ = fs::write(&path, DEFAULT_SOURCES_JSON);
-                        return def.clone();
-                    }
-                }
                 return cfg;
             }
         }
     }
 
-    // Secondary check: look for sources.json in current working directory
     let cwd_path = PathBuf::from("sources.json");
     if cwd_path.exists() {
         if let Ok(content) = fs::read_to_string(&cwd_path) {
@@ -129,8 +120,7 @@ pub fn load_sources_config_from_disk() -> SourcesConfig {
         }
     }
 
-    // Built-in default fallback if no custom configuration exists yet
-    if let Some(def) = default_cfg {
+    if let Ok(def) = serde_json::from_str::<SourcesConfig>(DEFAULT_SOURCES_JSON) {
         let _ = fs::write(&path, DEFAULT_SOURCES_JSON);
         return def;
     }

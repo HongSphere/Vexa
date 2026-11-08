@@ -84,10 +84,6 @@ export const PlayerView: React.FC = () => {
     sortedSources[0] ||
     null;
 
-  const isIframeSource =
-    activeSource?.sourceType === "jx_iframe" ||
-    activeSource?.sourceType === "official_web";
-
   const iframeSrc = useMemo(() => {
     if (!activeSource?.playUrl) return "";
     if (activeSource.sourceType === "official_web" && proxyPort) {
@@ -107,6 +103,8 @@ export const PlayerView: React.FC = () => {
     }
     return activeSource.playUrl;
   }, [activeSource, proxyPort, sourcesConfig]);
+
+
 
   const handleQuickSearch = async (kw?: string) => {
     const target = (kw ?? quickQuery).trim();
@@ -293,7 +291,7 @@ export const PlayerView: React.FC = () => {
 
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
         <div className="xl:col-span-8 space-y-4">
-          {isIframeSource && firstM3u8 && (
+          {activeSource?.sourceType === "jx_iframe" && firstM3u8 && (
             <div className="px-4 py-2.5 rounded-xl bg-sky-500/10 border border-sky-500/25 text-sky-400 text-xs flex items-center justify-between shadow-sm">
               <span className="flex items-center gap-1.5 font-medium">
                 <span>💡</span>
@@ -310,12 +308,24 @@ export const PlayerView: React.FC = () => {
             </div>
           )}
 
-          {isIframeSource ? (
+          {activeSource?.sourceType === "jx_iframe" ? (
+            <div className="w-full aspect-video rounded-2xl overflow-hidden bg-black border vx-divider shadow-2xl relative">
+              <iframe
+                key={`web-${iframeSrc}`}
+                src={iframeSrc}
+                title={activeSource?.sourceName || "视频播放"}
+                className="w-full h-full border-0"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+                allowFullScreen
+                sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+              />
+            </div>
+          ) : activeSource?.sourceType === "official_web" ? (
             <div className="w-full aspect-video rounded-2xl overflow-hidden bg-black border vx-divider shadow-2xl relative">
               <iframe
                 key={iframeSrc}
                 src={iframeSrc}
-                title={activeSource?.sourceName || "视频播放"}
+                title={activeSource?.sourceName || "官方网页"}
                 className="w-full h-full border-0"
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
                 allowFullScreen
