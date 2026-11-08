@@ -201,7 +201,7 @@ const WEBVIEW_BRIDGE_SCRIPT: &str = r#"
         const el = document.querySelector(sel);
         if (el && el.textContent) {
           const t = el.textContent.trim();
-          if (t && t.length >= 2 && !t.includes('首页') && !t.includes('官网') && !t.includes('VIP') && !t.includes('会员') && !t.includes('频道')) {
+          if (t && t.length >= 2 && !t.includes('首页') && !t.includes('官网') && !t.includes('会员') && !t.includes('频道')) {
             domHeadingText = t;
             break;
           }
@@ -1067,8 +1067,6 @@ pub fn get_platform_webview_url(app: &AppHandle) -> Result<String, String> {
 
         let cached = get_cached_url();
         let wv_url_str = wv.url().ok().map(|u| u.to_string()).unwrap_or_default();
-
-        eprintln!("[VEXA_DEBUG] get_platform_webview_url: wv.url='{}', cached='{}'", wv_url_str, cached);
 
         let is_concrete_page = |u: &str| -> bool {
             if let Ok(parsed) = tauri::Url::parse(u) {

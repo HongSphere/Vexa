@@ -1063,7 +1063,6 @@ pub async fn parse_url_entry(
     _proxy_url: Option<&str>,
 ) -> Result<VideoMetadata, String> {
     let trimmed = raw_url.trim();
-    eprintln!("[VEXA_DEBUG] parse_url_entry: raw_url='{}', hint='{:?}'", trimmed, page_title_hint);
     let (platform, platform_name) = detect_platform(trimmed);
 
     if trimmed.contains(".m3u8")
@@ -1193,8 +1192,6 @@ pub async fn parse_url_entry(
         None => (String::new(), String::new(), official_ep_idx),
     };
 
-    eprintln!("[VEXA_DEBUG] extracted keywords: base='{}', full='{}', ep='{:?}'", base_kw, full_kw, preferred_ep);
-
     let (mut aggregated_sources, mut vod_meta) = if !base_kw.is_empty() {
         fetch_aggregated_sources(&base_kw, &full_kw, preferred_ep).await
     } else {
@@ -1282,7 +1279,6 @@ pub async fn parse_url_entry(
     if resolved_episodes.is_empty() && !search_target.is_empty() {
         let (found_url, found_eps) = resolve_official_episodes_from_search(search_target, &platform).await;
         if let Some(u) = found_url {
-            eprintln!("[VEXA_DEBUG] Resolved official real video URL for parse lines: '{}'", u);
             resolved_official_url = u;
         }
         if !found_eps.is_empty() {
