@@ -69,7 +69,6 @@ export const MobilePlayerView: React.FC = () => {
   const [iframeReloadKey, setIframeReloadKey] = useState(0);
   const [sniffedStreamUrl, setSniffedStreamUrl] = useState("");
   const [useNativeForSniffed, setUseNativeForSniffed] = useState(false);
-  const [isSniffing, setIsSniffing] = useState(false);
   const [showFsControls, setShowFsControls] = useState(true);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [iframeBrightness, setIframeBrightness] = useState(1);
@@ -201,10 +200,7 @@ export const MobilePlayerView: React.FC = () => {
         (l) => activeSource.playUrl.startsWith(l.urlPrefix) || l.id === activeSource.sourceId
       );
       const ua = lineCfg?.ua || "desktop";
-      const baseRules = ["o.js", "trafficmanager", "union", "adbyunion", "popunder"];
-      const blockRules = Array.from(new Set([...(lineCfg?.blockRules || []), ...baseRules]));
-      const blockQuery = `&block=${encodeURIComponent(blockRules.join(","))}`;
-      return `http://127.0.0.1:${proxyPort}/web?url=${encodeURIComponent(activeSource.playUrl)}&ua=${encodeURIComponent(ua)}&shield=true${blockQuery}`;
+      return `http://127.0.0.1:${proxyPort}/web?url=${encodeURIComponent(activeSource.playUrl)}&ua=${encodeURIComponent(ua)}&mode=player`;
     }
     return activeSource.playUrl;
   }, [activeSource, proxyPort, sourcesConfig]);
@@ -212,7 +208,6 @@ export const MobilePlayerView: React.FC = () => {
   useEffect(() => {
     setSniffedStreamUrl("");
     setUseNativeForSniffed(false);
-    setIsSniffing(false);
 
     if (isIframe && iframeSrc) {
       setIsIframeLoading(true);
@@ -272,16 +267,13 @@ export const MobilePlayerView: React.FC = () => {
         typeof e.data.url === "string" &&
         e.data.url.startsWith("http")
       ) {
-        setIsSniffing(false);
         setIsIframeLoading(false);
         setSniffedStreamUrl(e.data.url);
-        setUseNativeForSniffed(true);
-        showToast("已成功嗅探原画切片，无缝接入原生播放器");
       }
     };
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [isIframeFullscreen, showToast]);
+  }, [isIframeFullscreen]);
 
   const sniffedFormat: VideoFormat | null = useMemo(() => {
     if (!sniffedStreamUrl) return null;
@@ -520,78 +512,53 @@ export const MobilePlayerView: React.FC = () => {
         }
       >
         {isIframe && !(useNativeForSniffed && sniffedFormat) ? (
-          <>
-            {isSniffing ? (
-              <div className="w-full h-full bg-slate-950 flex flex-col items-center justify-center gap-3 px-4 text-center select-none relative">
-                <div className="w-10 h-10 rounded-full bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400">
-                  <Loader2 className="w-5 h-5 animate-spin" />
+          <div
+            style={iframeContainerStyle}
+            onTouchStart={handleIframeTouchStart}
+            onTouchMove={handleIframeTouchMove}
+            onTouchEnd={handleIframeTouchEnd}
+            onClick={triggerControlsVisibility}
+            className={`w-full h-full bg-black relative ${
+              isIframeFullscreen ? "!w-full !h-full" : ""
+            }`}
+          >
+            <iframe
+              ref={iframeRef}
+              key={`${iframeSrc}-${iframeReloadKey}`}
+              src={iframeSrc}
+              title={activeSource?.sourceName || "播放器"}
+              onLoad={() => setIsIframeLoading(false)}
+              className="w-full h-full border-0"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+              allowFullScreen
+              sandbox="allow-scripts allow-same-origin allow-forms allow-presentation allow-popups allow-downloads"
+            />
+            {sniffedStreamUrl && !useNativeForSniffed && (
+              <div className="absolute top-2.5 left-2.5 right-2.5 z-30 flex items-center justify-between px-3 py-2 rounded-xl bg-slate-900/90 backdrop-blur-md border border-sky-500/30 text-white shadow-lg animate-in fade-in slide-in-from-top-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Sparkles className="w-4 h-4 text-sky-400 shrink-0" />
+                  <span className="text-xs font-medium truncate">已捕获超清直链切片</span>
                 </div>
-                <div className="space-y-1">
-                  <div className="text-xs font-semibold text-slate-200">
-                    正在嗅探「{activeSource?.sourceName || "专线"}」原画切片...
-                  </div>
-                  <div className="text-[11px] text-slate-400">
-                    优先提取原生直链，畅享高清画质与原生手势体验
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 mt-1">
+                <div className="flex items-center gap-1.5 shrink-0">
                   <button
                     onClick={() => {
-                      setIsSniffing(false);
-                      setIsIframeLoading(false);
-                      showToast("已跳过嗅探，直接进入网页播放");
+                      setUseNativeForSniffed(true);
+                      showToast("已切换至原生播放引擎");
                     }}
-                    className="px-2.5 py-1 rounded-full bg-white/10 hover:bg-white/20 text-slate-300 text-[11px] font-medium transition-all active:scale-95"
+                    className="px-2.5 py-1 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold active:scale-95 transition-transform"
                   >
-                    直接网页播放
+                    切为原生播放
                   </button>
-                  {firstM3u8 && (
-                    <button
-                      onClick={() => switchMediaSource(firstM3u8.sourceId)}
-                      className="px-2.5 py-1 rounded-full bg-sky-500/20 text-sky-400 text-[11px] font-medium transition-all active:scale-95"
-                    >
-                      切至影视源
-                    </button>
-                  )}
+                  <button
+                    onClick={() => setSniffedStreamUrl("")}
+                    className="p-1 rounded-lg text-slate-400 hover:text-white active:scale-95 transition-transform"
+                    title="忽略"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
                 </div>
-
-                <iframe
-                  ref={iframeRef}
-                  key={`sniff-${iframeSrc}-${iframeReloadKey}`}
-                  src={iframeSrc}
-                  title="sniff-sandbox"
-                  style={{
-                    position: "absolute",
-                    width: 1,
-                    height: 1,
-                    opacity: 0,
-                    pointerEvents: "none",
-                  }}
-                  sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
-                />
               </div>
-            ) : (
-              <div
-                style={iframeContainerStyle}
-                onTouchStart={handleIframeTouchStart}
-                onTouchMove={handleIframeTouchMove}
-                onTouchEnd={handleIframeTouchEnd}
-                onClick={triggerControlsVisibility}
-                className={`w-full h-full bg-black relative ${
-                  isIframeFullscreen ? "!w-full !h-full" : ""
-                }`}
-              >
-                <iframe
-                  ref={iframeRef}
-                  key={`${iframeSrc}-${iframeReloadKey}`}
-                  src={iframeSrc}
-                  title={activeSource?.sourceName || "播放器"}
-                  onLoad={() => setIsIframeLoading(false)}
-                  className="w-full h-full border-0"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-                  allowFullScreen
-                  sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
-                />
+            )}
                 {gestureHud && (
                   <div className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none">
                     <div className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-black/85 backdrop-blur-md border border-white/15 text-white shadow-2xl text-sm font-bold tracking-wide">
@@ -693,8 +660,6 @@ export const MobilePlayerView: React.FC = () => {
                   </div>
                 )}
               </div>
-            )}
-          </>
         ) : (
           <MobileVideoPlayer
             video={currentVideo}

@@ -96,10 +96,7 @@ export const PlayerView: React.FC = () => {
           l.id === activeSource.sourceId
       );
       const ua = lineCfg?.ua || "desktop";
-      const baseRules = ["o.js", "trafficmanager", "union", "adbyunion", "popunder"];
-      const blockRules = Array.from(new Set([...(lineCfg?.blockRules || []), ...baseRules]));
-      const blockQuery = `&block=${encodeURIComponent(blockRules.join(","))}`;
-      return `http://127.0.0.1:${proxyPort}/web?url=${encodeURIComponent(activeSource.playUrl)}&ua=${encodeURIComponent(ua)}&shield=true${blockQuery}`;
+      return `http://127.0.0.1:${proxyPort}/web?url=${encodeURIComponent(activeSource.playUrl)}&ua=${encodeURIComponent(ua)}&mode=player`;
     }
     return activeSource.playUrl;
   }, [activeSource, proxyPort, sourcesConfig]);
@@ -317,7 +314,7 @@ export const PlayerView: React.FC = () => {
                 className="w-full h-full border-0"
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
                 allowFullScreen
-                sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+                sandbox="allow-scripts allow-same-origin allow-forms allow-presentation allow-popups allow-downloads"
               />
             </div>
           ) : activeSource?.sourceType === "official_web" ? (
@@ -329,7 +326,7 @@ export const PlayerView: React.FC = () => {
                 className="w-full h-full border-0"
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
                 allowFullScreen
-                sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+                sandbox="allow-scripts allow-same-origin allow-forms allow-presentation allow-popups allow-downloads"
               />
             </div>
           ) : (

@@ -112,29 +112,58 @@ export const MobileDiscoverView: React.FC = () => {
 
   const handleParseOrSearch = async (val?: string) => {
     let query = (val || "").trim();
+    let activeTitle = currentWebviewTitle;
+
     if (!query) {
-      const latestProxyUrl = (await getLatestBrowsedUrl()).trim();
-      const currentSiteTarget = rawTargetUrl || currentSite?.mobileHomeUrl || currentSite?.homeUrl || "";
-      const currentSiteDomain = getUrlRootDomain(currentSiteTarget);
+      if (iframeRef.current?.contentWindow) {
+        try {
+          const info = await new Promise<{ url?: string; title?: string }>((resolve) => {
+            const timer = setTimeout(() => resolve({}), 220);
+            const onMsg = (e: MessageEvent) => {
+              if (e.data?.type === "VEXA_PAGE_INFO_RESP") {
+                clearTimeout(timer);
+                window.removeEventListener("message", onMsg);
+                resolve({ url: e.data.url, title: e.data.title });
+              }
+            };
+            window.addEventListener("message", onMsg);
+            iframeRef.current?.contentWindow?.postMessage({ type: "VEXA_REQ_PAGE_INFO" }, "*");
+          });
 
-      const isLatestMatchingSite =
-        !currentSiteDomain || getUrlRootDomain(latestProxyUrl) === currentSiteDomain;
-      const validLatestProxyUrl = isLatestMatchingSite ? latestProxyUrl : "";
+          if (info.url && !info.url.includes("127.0.0.1") && !info.url.includes("localhost")) {
+            query = info.url.trim();
+          }
+          if (info.title && info.title.trim()) {
+            activeTitle = info.title.trim();
+            setCurrentWebviewTitle(activeTitle);
+          }
+        } catch {}
+      }
 
-      if (isSpecificVideoUrl(validLatestProxyUrl)) {
-        query = validLatestProxyUrl;
-      } else if (isSpecificVideoUrl(currentWebviewUrl)) {
-        query = currentWebviewUrl.trim();
-      } else {
-        query = (currentWebviewUrl || validLatestProxyUrl || currentSiteTarget || "").trim();
+      if (!query) {
+        const latestProxyUrl = (await getLatestBrowsedUrl()).trim();
+        const currentSiteTarget = rawTargetUrl || currentSite?.mobileHomeUrl || currentSite?.homeUrl || "";
+        const currentSiteDomain = getUrlRootDomain(currentSiteTarget);
+
+        const isLatestMatchingSite =
+          !currentSiteDomain || getUrlRootDomain(latestProxyUrl) === currentSiteDomain;
+        const validLatestProxyUrl = isLatestMatchingSite ? latestProxyUrl : "";
+
+        if (isSpecificVideoUrl(validLatestProxyUrl)) {
+          query = validLatestProxyUrl;
+        } else if (isSpecificVideoUrl(currentWebviewUrl)) {
+          query = currentWebviewUrl.trim();
+        } else {
+          query = (currentWebviewUrl || validLatestProxyUrl || currentSiteTarget || "").trim();
+        }
       }
     }
+
     if (!query || query === "about:blank") {
       showToast("未检测到有效视频链接，请等待页面加载完成");
       return;
     }
 
-    let activeTitle = currentWebviewTitle;
     try {
       const docTitle = iframeRef.current?.contentDocument?.title;
       if (docTitle && typeof docTitle === "string" && docTitle.trim()) {

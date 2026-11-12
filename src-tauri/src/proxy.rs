@@ -23,10 +23,31 @@ fn latest_nav_url_lock() -> &'static RwLock<String> {
     LATEST_NAV_URL.get_or_init(|| RwLock::new(String::new()))
 }
 
+fn is_video_target_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    lower.contains("cid=")
+        || lower.contains("vid=")
+        || lower.contains("/cover/")
+        || lower.contains("/play")
+        || lower.contains("/v_")
+        || lower.contains("/v_show/")
+        || lower.contains("id_")
+        || lower.contains("/a_")
+        || lower.contains("/video/")
+        || lower.contains("/b/")
+        || lower.contains("/bangumi/")
+        || lower.contains("modal_id=")
+        || lower.contains("item_id=")
+}
+
 pub fn set_latest_nav_url(url: &str) {
     if !url.starts_with("http://127.0.0.1") && !url.starts_with("http://localhost") {
         if let Ok(mut lock) = latest_nav_url_lock().write() {
-            *lock = url.to_string();
+            let is_cur_video = is_video_target_url(&lock);
+            let is_new_video = is_video_target_url(url);
+            if !is_cur_video || is_new_video {
+                *lock = url.to_string();
+            }
         }
     }
 }
@@ -663,6 +684,7 @@ async fn proxy_web_handler(
     let client = shared_client();
     let is_desktop_ua = query.ua.as_deref() == Some("desktop")
         || query.mode.as_deref() == Some("pc_spoof");
+    let is_player_mode = query.mode.as_deref() == Some("player");
 
     let upstream_ua = if is_desktop_ua {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
@@ -670,10 +692,10 @@ async fn proxy_web_handler(
         "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
     };
 
-    let is_shield = query.shield.unwrap_or(false);
+    let is_shield = if is_player_mode { false } else { query.shield.unwrap_or(false) };
     let mut current_url = raw_url.to_string();
     let mut current_referer = query.ref_url.clone();
-    let max_hops = if is_shield { 4 } else { 1 };
+    let max_hops = if is_player_mode { 1 } else if is_shield { 4 } else { 1 };
     let iframe_unwrap_re = regex::Regex::new(r#"(?i)<iframe[^>]*\ssrc=["']([^"']+)["']"#).ok();
 
     let mut status = StatusCode::OK;
@@ -923,7 +945,7 @@ async fn proxy_web_handler(
         clean_html = re.replace_all(&clean_html, "").to_string();
     }
 
-    if is_shield {
+    if !is_player_mode && is_shield {
         if let Ok(re) = regex::Regex::new(r#"(?i)(<script[^>]*\ssrc=["'])([^"']+)(["'])"#) {
             clean_html = re.replace_all(&clean_html, |caps: &regex::Captures| {
                 let prefix = &caps[1];
@@ -996,32 +1018,33 @@ async fn proxy_web_handler(
                 }
             }).to_string();
         }
-    } else if let Ok(re) = regex::Regex::new(r#"(?i)(<iframe[^>]*\ssrc=["'])(https?://[^"']+)(["'])"#) {
-        clean_html = re.replace_all(&clean_html, |caps: &regex::Captures| {
-            let prefix = &caps[1];
-            let raw_src = &caps[2];
-            let suffix = &caps[3];
-            if raw_src.contains("127.0.0.1") || raw_src.contains("localhost") {
-                format!("{}{}{}", prefix, raw_src, suffix)
-            } else {
-                let proxied = format!(
-                    "http://127.0.0.1:{}/web?url={}&ua={}&shield=true",
-                    port,
-                    urlencoding::encode(raw_src),
-                    urlencoding::encode(if is_desktop_ua { "desktop" } else { "mobile" })
-                );
-                format!("{}{}{}", prefix, proxied, suffix)
-            }
-        }).to_string();
+    } else if !is_player_mode {
+        if let Ok(re) = regex::Regex::new(r#"(?i)(<iframe[^>]*\ssrc=["'])(https?://[^"']+)(["'])"#) {
+            clean_html = re.replace_all(&clean_html, |caps: &regex::Captures| {
+                let prefix = &caps[1];
+                let raw_src = &caps[2];
+                let suffix = &caps[3];
+                if raw_src.contains("127.0.0.1") || raw_src.contains("localhost") {
+                    format!("{}{}{}", prefix, raw_src, suffix)
+                } else {
+                    let proxied = format!(
+                        "http://127.0.0.1:{}/web?url={}&ua={}&shield=true",
+                        port,
+                        urlencoding::encode(raw_src),
+                        urlencoding::encode(if is_desktop_ua { "desktop" } else { "mobile" })
+                    );
+                    format!("{}{}{}", prefix, proxied, suffix)
+                }
+            }).to_string();
+        }
     }
 
     let block_keywords_json = serde_json::to_string(&block_keywords).unwrap_or_else(|_| "[]".to_string());
 
-    let injection = format!(
-        r#"
-<meta name="referrer" content="no-referrer">
-<style>
-/* 通用移动端应用引导跳转与悬浮弹窗屏蔽（中立通用规则） */
+    let css_block = if is_player_mode {
+        String::new()
+    } else {
+        r#"<style>
 .callEnd_box,
 .callEnd_fixed_box,
 .callEnd_title,
@@ -1076,7 +1099,7 @@ div[style*="z-index: 214748364"],
 div[style*="z-index:214748364"],
 div[style*="z-index: 9999999"],
 div[style*="z-index:9999999"],
-a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
+a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {
   display: none !important;
   pointer-events: none !important;
   visibility: hidden !important;
@@ -1088,12 +1111,20 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
   overflow: hidden !important;
   opacity: 0 !important;
   clip: rect(0, 0, 0, 0) !important;
-}}
-</style>
+}
+</style>"#.to_string()
+    };
+
+    let injection = format!(
+        r#"
+<meta name="referrer" content="no-referrer">
+{css_block}
 <script>
 (function() {{
   if (window.__VEXA_MOBILE_SHIELD__) return;
   window.__VEXA_MOBILE_SHIELD__ = true;
+
+  var isPlayerMode = {is_player_mode};
 
   try {{
     var isDesktopMode = {is_desktop_ua};
@@ -1106,6 +1137,7 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
       }} catch(e) {{}}
     }}
 
+  if (!isPlayerMode) {{
     try {{
       window.adbyunion = {{ push: function() {{}} }};
       Object.defineProperty(window, 'adbyunion', {{
@@ -1130,75 +1162,75 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
     var origAssign = window.location.assign;
     if (origAssign) {{
       window.location.assign = function(u) {{
-        if (isSuspiciousRedirect(u)) {{ console.warn('[Vexa Shield] Blocked unprompted redirect:', u); return; }}
+        if (isSuspiciousRedirect(u)) return;
         return origAssign.apply(window.location, arguments);
       }};
     }}
     var origReplace = window.location.replace;
     if (origReplace) {{
       window.location.replace = function(u) {{
-        if (isSuspiciousRedirect(u)) {{ console.warn('[Vexa Shield] Blocked unprompted replace:', u); return; }}
+        if (isSuspiciousRedirect(u)) return;
         return origReplace.apply(window.location, arguments);
       }};
     }}
-  }} catch(e) {{}}
 
-  try {{
-    var purgeAdOverlays = function(root) {{
-      var r = root || document;
-      if (!r || !r.querySelectorAll) return;
-      var targets = r.querySelectorAll('div, ins, a');
-      for (var i = 0; i < targets.length; i++) {{
-        var el = targets[i];
-        if (el.tagName === 'INS' || (el.id && el.id.indexOf('show-') === 0)) {{
-          el.remove();
-          continue;
-        }}
-        var s = el.getAttribute('style') || '';
-        if (s.indexOf('214748364') !== -1 || (el.style && parseInt(el.style.zIndex, 10) >= 2147483640)) {{
-          if (!el.classList.contains('artplayer-app') && el.id !== 'loading') {{
+    try {{
+      var purgeAdOverlays = function(root) {{
+        var r = root || document;
+        if (!r || !r.querySelectorAll) return;
+        var targets = r.querySelectorAll('div, ins, a');
+        for (var i = 0; i < targets.length; i++) {{
+          var el = targets[i];
+          if (el.tagName === 'INS' || (el.id && el.id.indexOf('show-') === 0)) {{
             el.remove();
+            continue;
+          }}
+          var s = el.getAttribute('style') || '';
+          if (s.indexOf('214748364') !== -1 || (el.style && parseInt(el.style.zIndex, 10) >= 2147483640)) {{
+            if (!el.classList.contains('artplayer-app') && el.id !== 'loading') {{
+              el.remove();
+            }}
           }}
         }}
-      }}
-    }};
-    var adObs = new MutationObserver(function() {{
-      purgeAdOverlays(document);
-    }});
-    adObs.observe(document.documentElement || document.body, {{
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['style', 'id', 'class']
-    }});
-    window.addEventListener('DOMContentLoaded', function() {{ purgeAdOverlays(document); }});
-    setInterval(function() {{ purgeAdOverlays(document); }}, 100);
-  }} catch(e) {{}}
+      }};
+      var adObs = new MutationObserver(function() {{
+        purgeAdOverlays(document);
+      }});
+      adObs.observe(document.documentElement || document.body, {{
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['style', 'id', 'class']
+      }});
+      window.addEventListener('DOMContentLoaded', function() {{ purgeAdOverlays(document); }});
+      setInterval(function() {{ purgeAdOverlays(document); }}, 100);
+    }} catch(e) {{}}
 
-  try {{
-    window.noCallUp = true;
-    Object.defineProperty(window, 'noCallUp', {{
-      get: function() {{ return true; }},
-      set: function() {{}},
-      configurable: true
-    }});
-  }} catch(e) {{}}
+    try {{
+      window.noCallUp = true;
+      Object.defineProperty(window, 'noCallUp', {{
+        get: function() {{ return true; }},
+        set: function() {{}},
+        configurable: true
+      }});
+    }} catch(e) {{}}
 
-  try {{
-    var removeAppCallups = function(root) {{
-      var r = root || document;
-      if (!r || !r.querySelectorAll) return;
-      var popups = r.querySelectorAll('.callEnd_box, .callGuide_box, [class*="callEnd"], [class*="callGuide"], [class*="h5-detail-guide"]');
-      for (var i = 0; i < popups.length; i++) {{
-        popups[i].remove();
-      }}
-    }};
-    var callupObs = new MutationObserver(function() {{
-      removeAppCallups(document);
-    }});
-    callupObs.observe(document.documentElement || document.body, {{ childList: true, subtree: true }});
-    window.addEventListener('DOMContentLoaded', function() {{ removeAppCallups(document); }});
-  }} catch(e) {{}}
+    try {{
+      var removeAppCallups = function(root) {{
+        var r = root || document;
+        if (!r || !r.querySelectorAll) return;
+        var popups = r.querySelectorAll('.callEnd_box, .callGuide_box, [class*="callEnd"], [class*="callGuide"], [class*="h5-detail-guide"]');
+        for (var i = 0; i < popups.length; i++) {{
+          popups[i].remove();
+        }}
+      }};
+      var callupObs = new MutationObserver(function() {{
+        removeAppCallups(document);
+      }});
+      callupObs.observe(document.documentElement || document.body, {{ childList: true, subtree: true }});
+      window.addEventListener('DOMContentLoaded', function() {{ removeAppCallups(document); }});
+    }} catch(e) {{}}
+  }}
 
   try {{
     var targetPath = "{target_path_and_query}";
@@ -1212,124 +1244,126 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
     realParent = window.parent;
   }} catch(e) {{}}
 
-  try {{
-    Object.defineProperty(window, 'top', {{
-      get: function() {{ return window; }},
-      configurable: true
-    }});
-  }} catch(e) {{}}
-  try {{
-    Object.defineProperty(window, 'parent', {{
-      get: function() {{ return window; }},
-      configurable: true
-    }});
-  }} catch(e) {{}}
+  if (!isPlayerMode) {{
+    try {{
+      Object.defineProperty(window, 'top', {{
+        get: function() {{ return window; }},
+        configurable: true
+      }});
+    }} catch(e) {{}}
+    try {{
+      Object.defineProperty(window, 'parent', {{
+        get: function() {{ return window; }},
+        configurable: true
+      }});
+    }} catch(e) {{}}
 
-  try {{
-    var origDomain = document.domain;
-    Object.defineProperty(Document.prototype, 'domain', {{
-      get: function() {{ return origDomain || (upstreamOrigin ? (new URL(upstreamOrigin)).hostname : window.location.hostname); }},
-      set: function(val) {{ /* silently ignore without throwing SecurityError in sandbox */ }},
-      configurable: true
-    }});
-  }} catch(e) {{}}
+    try {{
+      var origDomain = document.domain;
+      Object.defineProperty(Document.prototype, 'domain', {{
+        get: function() {{ return origDomain || (upstreamOrigin ? (new URL(upstreamOrigin)).hostname : window.location.hostname); }},
+        set: function(val) {{}},
+        configurable: true
+      }});
+    }} catch(e) {{}}
 
-  try {{
-    if (navigator.serviceWorker) {{
-      navigator.serviceWorker.register = function() {{
-        return Promise.reject(new Error("ServiceWorker registration disabled in sandbox"));
+    try {{
+      if (navigator.serviceWorker) {{
+        navigator.serviceWorker.register = function() {{
+          return Promise.reject(new Error("ServiceWorker registration disabled in sandbox"));
+        }};
+      }}
+    }} catch(e) {{}}
+
+    try {{
+      var fixImg = function(img) {{
+        if (!img) return;
+        img.referrerPolicy = 'no-referrer';
+        if (img.src && img.src.startsWith('http://') && img.src.indexOf('127.0.0.1') === -1) {{
+          img.src = 'https://' + img.src.slice(7);
+        }}
       }};
-    }}
-  }} catch(e) {{}}
-
-  try {{
-    var fixImg = function(img) {{
-      if (!img) return;
-      img.referrerPolicy = 'no-referrer';
-      if (img.src && img.src.startsWith('http://') && img.src.indexOf('127.0.0.1') === -1) {{
-        img.src = 'https://' + img.src.slice(7);
-      }}
-    }};
-    var obs = new MutationObserver(function(muts) {{
-      for (var i = 0; i < muts.length; i++) {{
-        var nodes = muts[i].addedNodes;
-        for (var j = 0; j < nodes.length; j++) {{
-          var n = nodes[j];
-          if (n.tagName === 'IMG') {{
-            fixImg(n);
-          }} else if (n.querySelectorAll) {{
-            var imgs = n.querySelectorAll('img');
-            for (var k = 0; k < imgs.length; k++) fixImg(imgs[k]);
+      var obs = new MutationObserver(function(muts) {{
+        for (var i = 0; i < muts.length; i++) {{
+          var nodes = muts[i].addedNodes;
+          for (var j = 0; j < nodes.length; j++) {{
+            var n = nodes[j];
+            if (n.tagName === 'IMG') {{
+              fixImg(n);
+            }} else if (n.querySelectorAll) {{
+              var imgs = n.querySelectorAll('img');
+              for (var k = 0; k < imgs.length; k++) fixImg(imgs[k]);
+            }}
           }}
         }}
-      }}
-    }});
-    obs.observe(document.documentElement || document.body, {{ childList: true, subtree: true }});
-    window.addEventListener('DOMContentLoaded', function() {{
-      var imgs = document.querySelectorAll('img');
-      for (var i = 0; i < imgs.length; i++) fixImg(imgs[i]);
-    }});
-  }} catch(e) {{}}
+      }});
+      obs.observe(document.documentElement || document.body, {{ childList: true, subtree: true }});
+      window.addEventListener('DOMContentLoaded', function() {{
+        var imgs = document.querySelectorAll('img');
+        for (var i = 0; i < imgs.length; i++) fixImg(imgs[i]);
+      }});
+    }} catch(e) {{}}
 
-  try {{
-    var fixBgEl = function(el) {{
-      if (!el || el._vxBgFixed) return;
-      var style = el.getAttribute('style') || '';
-      if (!style || (style.indexOf('url(') === -1 && style.indexOf('url (') === -1)) return;
-      var m = style.match(/background(?:-image)?\s*:\s*url\s*\(\s*['"]?(https?:\/\/[^'"\)]+)['"]?\s*\)/i);
-      if (m && m[1]) {{
-        el._vxBgFixed = true;
-        var imgUrl = m[1];
-        if (imgUrl.indexOf('127.0.0.1') === -1) {{
-          var img = document.createElement('img');
-          img.referrerPolicy = 'no-referrer';
-          img.setAttribute('referrerpolicy', 'no-referrer');
-          img.src = 'http://127.0.0.1:{port}/stream?url=' + encodeURIComponent(imgUrl);
-          img.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;z-index:2;pointer-events:none;border-radius:inherit;';
-          var compPos = window.getComputedStyle(el).position;
-          if (compPos === 'static') {{
-            el.style.position = 'relative';
+    try {{
+      var fixBgEl = function(el) {{
+        if (!el || el._vxBgFixed) return;
+        var style = el.getAttribute('style') || '';
+        if (!style || (style.indexOf('url(') === -1 && style.indexOf('url (') === -1)) return;
+        var m = style.match(/background(?:-image)?\s*:\s*url\s*\(\s*['"]?(https?:\/\/[^'"\)]+)['"]?\s*\)/i);
+        if (m && m[1]) {{
+          el._vxBgFixed = true;
+          var imgUrl = m[1];
+          if (imgUrl.indexOf('127.0.0.1') === -1) {{
+            var img = document.createElement('img');
+            img.referrerPolicy = 'no-referrer';
+            img.setAttribute('referrerpolicy', 'no-referrer');
+            img.src = 'http://127.0.0.1:{port}/stream?url=' + encodeURIComponent(imgUrl);
+            img.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;z-index:2;pointer-events:none;border-radius:inherit;';
+            var compPos = window.getComputedStyle(el).position;
+            if (compPos === 'static') {{
+              el.style.position = 'relative';
+            }}
+            el.insertBefore(img, el.firstChild);
           }}
-          el.insertBefore(img, el.firstChild);
         }}
-      }}
-    }};
+      }};
 
-    var scanBgEls = function(root) {{
-      var r = root || document;
-      if (!r) return;
-      if (r.nodeType === 1 && r.getAttribute && r.getAttribute('style')) {{
-        fixBgEl(r);
-      }}
-      if (r.querySelectorAll) {{
-        var list = r.querySelectorAll('[style*="url("], [style*="url ("]');
-        for (var i = 0; i < list.length; i++) fixBgEl(list[i]);
-      }}
-    }};
+      var scanBgEls = function(root) {{
+        var r = root || document;
+        if (!r) return;
+        if (r.nodeType === 1 && r.getAttribute && r.getAttribute('style')) {{
+          fixBgEl(r);
+        }}
+        if (r.querySelectorAll) {{
+          var list = r.querySelectorAll('[style*="url("], [style*="url ("]');
+          for (var i = 0; i < list.length; i++) fixBgEl(list[i]);
+        }}
+      }};
 
-    var bgObs = new MutationObserver(function(muts) {{
-      for (var i = 0; i < muts.length; i++) {{
-        var m = muts[i];
-        if (m.type === 'childList') {{
-          for (var j = 0; j < m.addedNodes.length; j++) {{
-            scanBgEls(m.addedNodes[j]);
+      var bgObs = new MutationObserver(function(muts) {{
+        for (var i = 0; i < muts.length; i++) {{
+          var m = muts[i];
+          if (m.type === 'childList') {{
+            for (var j = 0; j < m.addedNodes.length; j++) {{
+              scanBgEls(m.addedNodes[j]);
+            }}
+          }} else if (m.type === 'attributes') {{
+            fixBgEl(m.target);
           }}
-        }} else if (m.type === 'attributes') {{
-          fixBgEl(m.target);
         }}
-      }}
-    }});
+      }});
 
-    bgObs.observe(document.documentElement || document.body, {{
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['style', 'data-src', 'data-original']
-    }});
+      bgObs.observe(document.documentElement || document.body, {{
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['style', 'data-src', 'data-original']
+      }});
 
-    window.addEventListener('DOMContentLoaded', function() {{ scanBgEls(document); }});
-    setInterval(function() {{ scanBgEls(document); }}, 600);
-  }} catch(e) {{}}
+      window.addEventListener('DOMContentLoaded', function() {{ scanBgEls(document); }});
+      setInterval(function() {{ scanBgEls(document); }}, 600);
+    }} catch(e) {{}}
+  }}
 
   var upstreamBase = "{final_url}";
   var upstreamOrigin = "";
@@ -1402,36 +1436,40 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
       window.fetch = function(input, init) {{
         var rawUrl = (typeof input === 'string') ? input : (input && input.url ? input.url : '');
         var urlStr = toFullApiUrl(rawUrl);
-        if (shouldRouteToM3u8Proxy(urlStr)) {{
+        if (isM3u8Resource(urlStr)) {{
           try {{
             if (realParent && realParent !== window) {{
               realParent.postMessage({{ type: 'VEXA_SNIFFED_STREAM', url: urlStr }}, '*');
             }}
           }} catch(e) {{}}
-          var m3u8Proxied = 'http://127.0.0.1:{port}/m3u8?url=' + encodeURIComponent(urlStr);
-          if (typeof input === 'string') {{
-            input = m3u8Proxied;
-          }} else {{
-            input = new Request(m3u8Proxied, input);
-          }}
-        }} else if (shouldRouteToApiProxy(urlStr)) {{
-          var proxied = 'http://127.0.0.1:{port}/api_proxy?url=' + encodeURIComponent(urlStr) + (isShieldMode && upstreamBase ? '&ref_url=' + encodeURIComponent(upstreamBase) : '');
-          if (typeof input === 'string') {{
-            input = proxied;
-          }} else {{
-            input = new Request(proxied, input);
-          }}
-        }} else if (typeof input === 'string') {{
-          if (input.startsWith('/') && !input.startsWith('//')) {{
-            input = 'http://127.0.0.1:{port}' + input;
-          }} else if (input.startsWith('//')) {{
-            input = 'https:' + input;
-          }}
-        }} else if (input && input.url) {{
-          if (input.url.startsWith('/') && !input.url.startsWith('//')) {{
-            input = new Request('http://127.0.0.1:{port}' + input.url, input);
-          }} else if (input.url.startsWith('//')) {{
-            input = new Request('https:' + input.url, input);
+        }}
+        if (!isPlayerMode) {{
+          if (shouldRouteToM3u8Proxy(urlStr)) {{
+            var m3u8Proxied = 'http://127.0.0.1:{port}/m3u8?url=' + encodeURIComponent(urlStr);
+            if (typeof input === 'string') {{
+              input = m3u8Proxied;
+            }} else {{
+              input = new Request(m3u8Proxied, input);
+            }}
+          }} else if (shouldRouteToApiProxy(urlStr)) {{
+            var proxied = 'http://127.0.0.1:{port}/api_proxy?url=' + encodeURIComponent(urlStr) + (isShieldMode && upstreamBase ? '&ref_url=' + encodeURIComponent(upstreamBase) : '');
+            if (typeof input === 'string') {{
+              input = proxied;
+            }} else {{
+              input = new Request(proxied, input);
+            }}
+          }} else if (typeof input === 'string') {{
+            if (input.startsWith('/') && !input.startsWith('//')) {{
+              input = 'http://127.0.0.1:{port}' + input;
+            }} else if (input.startsWith('//')) {{
+              input = 'https:' + input;
+            }}
+          }} else if (input && input.url) {{
+            if (input.url.startsWith('/') && !input.url.startsWith('//')) {{
+              input = new Request('http://127.0.0.1:{port}' + input.url, input);
+            }} else if (input.url.startsWith('//')) {{
+              input = new Request('https:' + input.url, input);
+            }}
           }}
         }}
         return origFetch.call(this, input, init);
@@ -1445,19 +1483,23 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
       var newUrl = url;
       if (typeof url === 'string') {{
         var full = toFullApiUrl(url);
-        if (shouldRouteToM3u8Proxy(full)) {{
+        if (isM3u8Resource(full)) {{
           try {{
             if (realParent && realParent !== window) {{
               realParent.postMessage({{ type: 'VEXA_SNIFFED_STREAM', url: full }}, '*');
             }}
           }} catch(e) {{}}
-          newUrl = 'http://127.0.0.1:{port}/m3u8?url=' + encodeURIComponent(full);
-        }} else if (shouldRouteToApiProxy(full)) {{
-          newUrl = 'http://127.0.0.1:{port}/api_proxy?url=' + encodeURIComponent(full) + (isShieldMode && upstreamBase ? '&ref_url=' + encodeURIComponent(upstreamBase) : '');
-        }} else if (url.startsWith('/') && !url.startsWith('//')) {{
-          newUrl = 'http://127.0.0.1:{port}' + url;
-        }} else if (url.startsWith('//')) {{
-          newUrl = 'https:' + url;
+        }}
+        if (!isPlayerMode) {{
+          if (shouldRouteToM3u8Proxy(full)) {{
+            newUrl = 'http://127.0.0.1:{port}/m3u8?url=' + encodeURIComponent(full);
+          }} else if (shouldRouteToApiProxy(full)) {{
+            newUrl = 'http://127.0.0.1:{port}/api_proxy?url=' + encodeURIComponent(full) + (isShieldMode && upstreamBase ? '&ref_url=' + encodeURIComponent(upstreamBase) : '');
+          }} else if (url.startsWith('/') && !url.startsWith('//')) {{
+            newUrl = 'http://127.0.0.1:{port}' + url;
+          }} else if (url.startsWith('//')) {{
+            newUrl = 'https:' + url;
+          }}
         }}
       }}
       var args = Array.prototype.slice.call(arguments);
@@ -1466,7 +1508,7 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
     }};
   }} catch(e) {{}}
 
-  if (isShieldMode) {{
+  if (isShieldMode || isPlayerMode) {{
     try {{
       var notifyFsToggle = function() {{
         try {{
@@ -1514,7 +1556,7 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
 
   try {{
     var checkVideoSrc = function(v) {{
-      if (v && v.src && shouldRouteToM3u8Proxy(v.src)) {{
+      if (v && v.src && isM3u8Resource(v.src)) {{
         try {{
           if (realParent && realParent !== window) {{
             realParent.postMessage({{ type: 'VEXA_SNIFFED_STREAM', url: toFullApiUrl(v.src) }}, '*');
@@ -1579,21 +1621,18 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
     if (trimmed.startsWith('javascript:') || trimmed.startsWith('about:') || trimmed.startsWith('data:') || trimmed.startsWith('#')) return '';
 
     if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {{
-      if (trimmed.indexOf('/web?url=') !== -1) {{
+      if (trimmed.indexOf('/web?url=') !== -1 || trimmed.indexOf('/web?') !== -1) {{
         try {{
-          var rest = trimmed.split('/web?url=')[1];
-          var firstPart = rest.split('&')[0];
-          var decoded = decodeURIComponent(firstPart);
-          var extraParams = rest.split('&').slice(1).join('&');
-          if (extraParams) {{
-            decoded += (decoded.indexOf('?') !== -1 ? '&' : '?') + extraParams;
-          }}
-          return decoded;
+          var uObj = new URL(trimmed);
+          var realParam = uObj.searchParams.get('url');
+          if (realParam) return realParam;
         }} catch(e) {{}}
       }}
       if (trimmed.indexOf('127.0.0.1') !== -1 || trimmed.indexOf('localhost') !== -1) {{
         try {{
           var p = new URL(trimmed);
+          var realP = p.searchParams.get('url');
+          if (realP) return realP;
           return upstreamOrigin + p.pathname + p.search + p.hash;
         }} catch(e) {{}}
       }}
@@ -1625,12 +1664,8 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
   function probeCurrentPageVideo() {{
     try {{
       var v = document.querySelector('video');
-      if (v && v.src && (v.src.startsWith('http://') || v.src.startsWith('https://')) && !v.src.startsWith('blob:')) {{
+      if (v && v.src && (v.src.startsWith('http://') || v.src.startsWith('https://')) && !v.src.startsWith('blob:') && v.src.indexOf('127.0.0.1') === -1) {{
         return v.src;
-      }}
-      var link = document.querySelector('a[href*="/v_"], a[href*="/cover/"], a[href*="/video/"], a[href*="/v_show/"], a[href*="/b/"], a[href*="vid="], a[href*="cid="]');
-      if (link && link.href) {{
-        return toRealUrl(link.href);
       }}
     }} catch(e) {{}}
     return null;
@@ -1721,7 +1756,33 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
 
   window.addEventListener('message', function(e) {{
     if (!e.data || typeof e.data !== 'object') return;
-    if (e.data.type === 'VEXA_NAV_BACK') {{
+    if (e.data.type === 'VEXA_REQ_PAGE_INFO') {{
+      try {{
+        var curUrl = toRealUrl(window.location.href) || upstreamBase;
+        var canonical = document.querySelector('link[rel="canonical"]');
+        if (canonical && canonical.href) {{
+          var cUrl = toRealUrl(canonical.href);
+          if (cUrl && cUrl.indexOf('127.0.0.1') === -1) curUrl = cUrl;
+        }}
+        var ogUrl = document.querySelector('meta[property="og:url"]');
+        if (ogUrl && ogUrl.content) {{
+          var oUrl = toRealUrl(ogUrl.content);
+          if (oUrl && oUrl.indexOf('127.0.0.1') === -1) curUrl = oUrl;
+        }}
+        var curTitle = document.title || '';
+        var ogTitle = document.querySelector('meta[property="og:title"]');
+        if (ogTitle && ogTitle.content) {{
+          curTitle = ogTitle.content;
+        }}
+        if (realParent && realParent !== window) {{
+          realParent.postMessage({{
+            type: 'VEXA_PAGE_INFO_RESP',
+            url: curUrl,
+            title: curTitle
+          }}, '*');
+        }}
+      }} catch(err) {{}}
+    }} else if (e.data.type === 'VEXA_NAV_BACK') {{
       try {{
         window.history.back();
       }} catch(err) {{}}
@@ -1736,6 +1797,11 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {{
       try {{
         var v2 = document.querySelector('video');
         if (v2) {{
+          v2.volume = Math.max(0, Math.min(1, v2.volume + e.data.delta));
+        }}
+      }} catch(err) {{}}
+    }}
+  }});
           v2.volume = Math.max(0, Math.min(1, v2.volume + e.data.delta));
         }}
       }} catch(err) {{}}
