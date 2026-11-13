@@ -72,6 +72,10 @@ export const MobilePlayerView: React.FC = () => {
   const [showFsControls, setShowFsControls] = useState(true);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [iframeBrightness, setIframeBrightness] = useState(1);
+  const playerViewMode = useAppStore((s) => s.playerViewMode);
+  const [detectedVertical, setDetectedVertical] = useState(false);
+  const isVerticalLayout =
+    playerViewMode === "vertical" || (playerViewMode === "auto" && detectedVertical);
   const [iframeVolume, setIframeVolume] = useState(1);
   const [gestureHud, setGestureHud] = useState<{
     icon: "sun" | "volume" | "forward" | "rewind";
@@ -508,7 +512,9 @@ export const MobilePlayerView: React.FC = () => {
         className={
           isIframeFullscreen || isMobileFullscreen
             ? "fixed inset-0 z-[99999] bg-black"
-            : "w-full aspect-video bg-black shrink-0 relative overflow-hidden z-10 shadow-sm"
+            : isVerticalLayout && !(isIframe && !(useNativeForSniffed && sniffedFormat))
+            ? "w-full h-[64vh] bg-black shrink-0 relative overflow-hidden z-10 shadow-sm transition-all duration-300"
+            : "w-full aspect-video bg-black shrink-0 relative overflow-hidden z-10 shadow-sm transition-all duration-300"
         }
       >
         {isIframe && !(useNativeForSniffed && sniffedFormat) ? (
@@ -668,6 +674,7 @@ export const MobilePlayerView: React.FC = () => {
             initialSeekTime={initialSeekTime}
             onOpenDownloadModal={handleDownload}
             onBack={() => setActiveTab("discover")}
+            onAspectDetected={setDetectedVertical}
           />
         )}
       </div>

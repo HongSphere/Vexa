@@ -19,6 +19,10 @@ import {
   List,
   SkipForward,
   X,
+  Smartphone,
+  Monitor,
+  Crop,
+  FastForward,
 } from "lucide-react";
 import {
   DanmakuItem,
@@ -28,6 +32,8 @@ import {
 import { useAppStore } from "../store/useAppStore";
 import { formatDuration } from "../utils/format";
 import { useIsMobile } from "../hooks/useIsMobile";
+import { useEpisodeMemory } from "../hooks/useEpisodeMemory";
+import { useSourceStream } from "../hooks/useSourceStream";
 
 interface VideoPlayerProps {
   video: VideoMetadata;
@@ -83,7 +89,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     updateWatchProgress,
     switchEpisode,
     setIsMobileFullscreen,
+    playerViewMode,
+    setPlayerViewMode,
+    playerFillMode,
+    setPlayerFillMode,
+    showToast,
   } = useAppStore();
+
+  const { skipConfig, updateSkipConfig, handleTimeTick } = useEpisodeMemory();
+  const { markPlaybackSuccess, failoverNextSource } = useSourceStream();
+  const [detectedVertical, setDetectedVertical] = useState(false);
+  const [showSkipPopover, setShowSkipPopover] = useState(false);
+  const isVerticalLayout =
+    playerViewMode === "vertical" || (playerViewMode === "auto" && detectedVertical);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -287,13 +305,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       const onError = () => {
         setIsBuffering(false);
-        // Automatic fallback: if DASH stream fails to decode, switch to progressive MP4
         if (format?.isDash) {
           const fallbackMp4 = video.formats?.find((f) => !f.isDash);
           if (fallbackMp4 && fallbackMp4.formatId !== format.formatId) {
             switchResolution(fallbackMp4, vEl.currentTime || 0);
+            return;
           }
         }
+        failoverNextSource();
       };
 
       vEl.addEventListener("loadedmetadata", onLoadedMeta, { once: true });
@@ -385,6 +404,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       lastSavedTimeRef.current = now;
       updateWatchProgress(now, vEl.duration || duration);
     }
+
+    handleTimeTick(vEl, now, vEl.duration || duration);
   };
 
   const togglePlay = () => {
@@ -756,16 +777,25 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       {/* Master Video Element */}
       <video
         ref={videoRef}
-        className={`w-full h-full object-contain cursor-pointer transition-transform duration-300 origin-top ${
-          zoomCrop ? "scale-[1.08] -translate-y-[3%]" : ""
-        }`}
+        className={`w-full h-full cursor-pointer transition-transform duration-300 origin-top ${
+          playerFillMode === "cover" ? "object-cover" : "object-contain"
+        } ${zoomCrop ? "scale-[1.08] -translate-y-[3%]" : ""}`}
         onClick={togglePlay}
         onDoubleClick={toggleFullscreen}
+        onLoadedMetadata={(e) => {
+          const el = e.currentTarget;
+          if (el.videoWidth > 0 && el.videoHeight > 0) {
+            setDetectedVertical(el.videoWidth / el.videoHeight < 0.85);
+          }
+        }}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
         onWaiting={() => setIsBuffering(true)}
         onLoadedData={() => setIsBuffering(false)}
-        onPlaying={() => setIsBuffering(false)}
+        onPlaying={() => {
+          setIsBuffering(false);
+          markPlaybackSuccess();
+        }}
         onCanPlay={() => setIsBuffering(false)}
         onTimeUpdate={handleTimeUpdate}
         onEnded={handleVideoEnded}
@@ -1215,6 +1245,142 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       {playbackRate === rate && <Check className="w-3 h-3" />}
                     </button>
                   ))}
+                </div>
+              )}
+            </div>
+
+            <button
+              onClick={() => {
+                const order: Array<"auto" | "vertical" | "landscape"> = [
+                  "auto",
+                  "vertical",
+                  "landscape",
+                ];
+                const next = order[(order.indexOf(playerViewMode) + 1) % order.length];
+                setPlayerViewMode(next);
+                const label =
+                  next === "vertical"
+                    ? "竖屏沉浸"
+                    : next === "landscape"
+                    ? "常规横屏"
+                    : "自动识别";
+                showToast(`视图模式：${label}`);
+              }}
+              className={`hidden sm:flex px-2.5 py-1.5 rounded-lg text-xs font-semibold items-center gap-1 transition-all border ${
+                playerViewMode !== "auto"
+                  ? "bg-sky-500/20 text-sky-400 border-sky-500/40"
+                  : "bg-white/10 hover:bg-white/15 text-slate-200 border-transparent"
+              }`}
+              title="切换竖屏/横屏视图模式"
+            >
+              {isVerticalLayout ? (
+                <Smartphone className="w-3.5 h-3.5" />
+              ) : (
+                <Monitor className="w-3.5 h-3.5" />
+              )}
+              <span>
+                {playerViewMode === "vertical"
+                  ? "竖屏"
+                  : playerViewMode === "landscape"
+                  ? "横屏"
+                  : "自动"}
+              </span>
+            </button>
+
+            <button
+              onClick={() => {
+                const next = playerFillMode === "contain" ? "cover" : "contain";
+                setPlayerFillMode(next);
+                showToast(next === "cover" ? "画面填充：铺满" : "画面填充：适应");
+              }}
+              className={`hidden sm:flex px-2.5 py-1.5 rounded-lg text-xs font-semibold items-center gap-1 transition-all border ${
+                playerFillMode === "cover"
+                  ? "bg-sky-500/20 text-sky-400 border-sky-500/40"
+                  : "bg-white/10 hover:bg-white/15 text-slate-200 border-transparent"
+              }`}
+              title="切换画面填充比例"
+            >
+              <Crop className="w-3.5 h-3.5" />
+              <span>{playerFillMode === "cover" ? "铺满" : "适应"}</span>
+            </button>
+
+            <div className="relative hidden sm:block">
+              <button
+                onClick={() => {
+                  setShowSkipPopover(!showSkipPopover);
+                  setShowSpeedMenu(false);
+                  setShowQualityMenu(false);
+                  setShowDanmakuPopover(false);
+                }}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all border ${
+                  skipConfig.introSec > 0 || skipConfig.outroSec > 0
+                    ? "bg-amber-500/20 text-amber-400 border-amber-500/40"
+                    : "bg-white/10 hover:bg-white/15 text-slate-200 border-transparent"
+                }`}
+                title="设置跳过片头片尾"
+              >
+                <FastForward className="w-3.5 h-3.5" />
+                <span>跳过</span>
+              </button>
+              {showSkipPopover && (
+                <div className="absolute bottom-11 right-0 w-64 bg-[#181c26]/95 backdrop-blur-xl border border-white/15 rounded-xl p-3 shadow-2xl z-40 space-y-2.5 text-white text-xs">
+                  <div className="flex items-center justify-between font-semibold">
+                    <span>剧集跳过记忆</span>
+                    <button
+                      onClick={() => setShowSkipPopover(false)}
+                      className="text-slate-400 hover:text-white"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between bg-white/5 px-2.5 py-2 rounded-lg">
+                    <span>片头</span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => updateSkipConfig({ introSec: skipConfig.introSec - 15 })}
+                        className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20"
+                      >
+                        -15s
+                      </button>
+                      <span className="font-mono w-9 text-center">{skipConfig.introSec}s</span>
+                      <button
+                        onClick={() => updateSkipConfig({ introSec: skipConfig.introSec + 15 })}
+                        className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20"
+                      >
+                        +15s
+                      </button>
+                      <button
+                        onClick={() => updateSkipConfig({ introSec: Math.round(currentTime) })}
+                        className="px-1.5 py-0.5 rounded bg-sky-500/80 text-white text-[10px]"
+                      >
+                        当前点
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between bg-white/5 px-2.5 py-2 rounded-lg">
+                    <span>片尾</span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => updateSkipConfig({ outroSec: skipConfig.outroSec - 15 })}
+                        className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20"
+                      >
+                        -15s
+                      </button>
+                      <span className="font-mono w-9 text-center">{skipConfig.outroSec}s</span>
+                      <button
+                        onClick={() => updateSkipConfig({ outroSec: skipConfig.outroSec + 15 })}
+                        className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20"
+                      >
+                        +15s
+                      </button>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => updateSkipConfig({ introSec: 0, outroSec: 0 })}
+                    className="w-full py-1 text-[11px] text-slate-400 hover:text-white"
+                  >
+                    清零重置
+                  </button>
                 </div>
               )}
             </div>

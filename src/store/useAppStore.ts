@@ -30,9 +30,19 @@ export type NavTab =
   | "history"
   | "settings";
 
+export type PlayerViewMode = "auto" | "vertical" | "landscape";
+export type PlayerFillMode = "contain" | "cover";
+export interface SeriesSkipConfig {
+  introSec: number;
+  outroSec: number;
+}
+
 const STORAGE_SETTINGS_KEY = "vexa_settings_v2";
 const STORAGE_HISTORY_KEY = "vexa_history_v1";
 const STORAGE_DOWNLOADS_KEY = "vexa_downloads_v1";
+const STORAGE_VIEW_MODE_KEY = "vexa_player_view_mode_v1";
+const STORAGE_FILL_MODE_KEY = "vexa_player_fill_mode_v1";
+const STORAGE_SERIES_SKIP_KEY = "vexa_series_skip_v1";
 
 const defaultSettings: AppSettings = {
   themeMode: "system",
@@ -115,6 +125,17 @@ interface AppState {
   setProxyPort: (port: number) => void;
   isMobileFullscreen: boolean;
   setIsMobileFullscreen: (fullscreen: boolean) => void;
+
+  playerViewMode: PlayerViewMode;
+  setPlayerViewMode: (mode: PlayerViewMode) => void;
+  playerFillMode: PlayerFillMode;
+  setPlayerFillMode: (mode: PlayerFillMode) => void;
+  seriesSkipMap: Record<string, SeriesSkipConfig>;
+  setSeriesSkip: (seriesKey: string, cfg: SeriesSkipConfig) => void;
+  appendCurrentVideoSources: (
+    targetUrl: string,
+    newSources: import("../types/media").MediaSource[]
+  ) => void;
 
   toastMessage: string | null;
   showToast: (msg: string) => void;
@@ -373,6 +394,55 @@ export const useAppStore = create<AppState>((set, get) => ({
   setProxyPort: (port) => set({ proxyPort: port }),
   isMobileFullscreen: false,
   setIsMobileFullscreen: (fullscreen) => set({ isMobileFullscreen: fullscreen }),
+
+  playerViewMode: readStorage<PlayerViewMode>(STORAGE_VIEW_MODE_KEY, "auto"),
+  setPlayerViewMode: (mode) => {
+    writeStorage(STORAGE_VIEW_MODE_KEY, mode);
+    set({ playerViewMode: mode });
+  },
+  playerFillMode: readStorage<PlayerFillMode>(STORAGE_FILL_MODE_KEY, "contain"),
+  setPlayerFillMode: (mode) => {
+    writeStorage(STORAGE_FILL_MODE_KEY, mode);
+    set({ playerFillMode: mode });
+  },
+  seriesSkipMap: readStorage<Record<string, SeriesSkipConfig>>(STORAGE_SERIES_SKIP_KEY, {}),
+  setSeriesSkip: (seriesKey, cfg) => {
+    if (!seriesKey) return;
+    const next = { ...get().seriesSkipMap, [seriesKey]: cfg };
+    writeStorage(STORAGE_SERIES_SKIP_KEY, next);
+    set({ seriesSkipMap: next });
+  },
+  appendCurrentVideoSources: (targetUrl, newSources) => {
+    const cur = get().currentVideo;
+    if (!cur || !newSources || newSources.length === 0) return;
+    if (cur.url !== targetUrl) return;
+    const existing = cur.sources || [];
+    const existingIds = new Set(existing.map((s) => s.sourceId));
+    const filtered = newSources.filter((s) => !existingIds.has(s.sourceId));
+    if (filtered.length === 0) return;
+    const jxIdx = existing.findIndex((s) => s.sourceType === "jx_iframe");
+    let merged: typeof existing;
+    if (jxIdx >= 0) {
+      merged = [
+        ...existing.slice(0, jxIdx),
+        ...filtered,
+        ...existing.slice(jxIdx),
+      ];
+    } else {
+      merged = [...existing, ...filtered];
+    }
+    const nextEpisodes =
+      (cur.episodes?.length || 0) === 0 && filtered[0]?.episodes?.length
+        ? filtered[0].episodes
+        : cur.episodes;
+    set({
+      currentVideo: {
+        ...cur,
+        sources: merged,
+        episodes: nextEpisodes,
+      },
+    });
+  },
 
   toastMessage: null,
   showToast: (msg) => {

@@ -2,8 +2,10 @@ pub mod auth;
 pub mod browser;
 pub mod downloader;
 pub mod extractor;
+pub mod health_tracker;
 pub mod models;
 pub mod proxy;
+pub mod proxy_cache;
 pub mod sources_config;
 pub mod updater;
 
@@ -43,7 +45,7 @@ async fn parse_media_url(
         .filter(|t| !t.trim().is_empty())
         .or_else(|| get_cached_title_for_platform(&plat));
     let hint_opt = hint.as_deref().filter(|s| !s.trim().is_empty());
-    parse_url_entry(&url, hint_opt, proxy_url.as_deref()).await
+    parse_url_entry(&url, hint_opt, proxy_url.as_deref(), Some(&app)).await
 }
 
 #[tauri::command]
@@ -250,6 +252,24 @@ fn load_local_sources_file(path: Option<String>) -> Result<sources_config::Sourc
     sources_config::import_sources_from_string(&content)
 }
 
+#[tauri::command]
+fn report_source_health(source_id: String, success: bool, latency_ms: u64) {
+    health_tracker::record_source_result(&source_id, success, latency_ms);
+}
+
+#[tauri::command]
+async fn prefetch_m3u8_index(
+    url: String,
+    headers: Option<std::collections::HashMap<String, String>>,
+) -> bool {
+    proxy_cache::prefetch_m3u8_index(&url, headers).await
+}
+
+#[tauri::command]
+fn get_source_health_scores() -> std::collections::HashMap<String, f64> {
+    health_tracker::get_all_health_scores()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -260,6 +280,7 @@ pub fn run() {
             if let Ok(dir) = app.path().app_config_dir().or_else(|_| app.path().app_data_dir()) {
                 let _ = std::fs::create_dir_all(&dir);
                 sources_config::set_config_dir(dir.clone());
+                health_tracker::set_config_dir(dir.clone());
                 auth::set_auth_dir(dir.join("auth"));
             }
             sources_config::init_sources_config();
@@ -293,6 +314,9 @@ pub fn run() {
             import_sources_url,
             reset_sources_config,
             load_local_sources_file,
+            report_source_health,
+            prefetch_m3u8_index,
+            get_source_health_scores,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Vexa Tauri application");

@@ -382,3 +382,41 @@ export async function loadLocalSourcesFile(path?: string): Promise<SourcesConfig
   }
   return invoke<SourcesConfig>("load_local_sources_file", { path });
 }
+
+export interface AppendSourcesPayload {
+  targetUrl: string;
+  sources: import("../types/media").MediaSource[];
+}
+
+export async function subscribeMediaSourcesAppend(
+  cb: (payload: AppendSourcesPayload) => void
+): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  const unlisten = await listen<AppendSourcesPayload>("media-sources-append", (event) => {
+    cb(event.payload);
+  });
+  return unlisten;
+}
+
+export async function reportSourceHealth(
+  sourceId: string,
+  success: boolean,
+  latencyMs: number
+): Promise<void> {
+  if (!isTauri() || !sourceId) return;
+  try {
+    await invoke("report_source_health", { sourceId, success, latencyMs });
+  } catch {}
+}
+
+export async function prefetchM3u8Index(
+  url: string,
+  headers?: Record<string, string>
+): Promise<boolean> {
+  if (!isTauri() || !url || !url.includes(".m3u8")) return false;
+  try {
+    return await invoke<boolean>("prefetch_m3u8_index", { url, headers: headers || null });
+  } catch {
+    return false;
+  }
+}

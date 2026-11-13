@@ -26,11 +26,17 @@ import {
   Layers,
   X,
   Download,
+  Smartphone,
+  Monitor,
+  Crop,
+  FastForward,
 } from "lucide-react";
 import { VideoMetadata, VideoFormat } from "../../types/media";
 import { useAppStore } from "../../store/useAppStore";
 import { formatDuration } from "../../utils/format";
 import { setAppFullscreen } from "../../services/api";
+import { useEpisodeMemory } from "../../hooks/useEpisodeMemory";
+import { useSourceStream } from "../../hooks/useSourceStream";
 
 interface MobileVideoPlayerProps {
   video: VideoMetadata;
@@ -39,6 +45,7 @@ interface MobileVideoPlayerProps {
   initialSeekTime?: number;
   onOpenDownloadModal?: () => void;
   onBack?: () => void;
+  onAspectDetected?: (isVertical: boolean) => void;
 }
 
 function buildProxiedStreamUrl(
@@ -71,6 +78,7 @@ export const MobileVideoPlayer: React.FC<MobileVideoPlayerProps> = ({
   initialSeekTime = 0,
   onOpenDownloadModal,
   onBack,
+  onAspectDetected,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -84,7 +92,21 @@ export const MobileVideoPlayer: React.FC<MobileVideoPlayerProps> = ({
     switchEpisode,
     isMobileFullscreen,
     setIsMobileFullscreen,
+    playerViewMode,
+    setPlayerViewMode,
+    playerFillMode,
+    setPlayerFillMode,
+    showToast,
   } = useAppStore();
+
+  const { skipConfig, updateSkipConfig, handleTimeTick } = useEpisodeMemory();
+  const { markPlaybackSuccess, failoverNextSource } = useSourceStream();
+
+  const [detectedVertical, setDetectedVertical] = useState(false);
+  const isVerticalLayout =
+    playerViewMode === "vertical" || (playerViewMode === "auto" && detectedVertical);
+  const [swipeEpisodeHUD, setSwipeEpisodeHUD] = useState<"next" | "prev" | null>(null);
+  const [showSkipSheet, setShowSkipSheet] = useState(false);
 
   // Core Playback State
   const [isPlaying, setIsPlaying] = useState(false);
@@ -183,6 +205,9 @@ export const MobileVideoPlayer: React.FC<MobileVideoPlayerProps> = ({
   const currentEpIndex = video.currentEpisodeIndex || 1;
   const nextEpisode = video.episodes?.find(
     (ep) => ep.index === currentEpIndex + 1
+  );
+  const prevEpisode = video.episodes?.find(
+    (ep) => ep.index === currentEpIndex - 1
   );
 
   // Proxied Video / Audio URLs
@@ -292,8 +317,10 @@ export const MobileVideoPlayer: React.FC<MobileVideoPlayerProps> = ({
           const fallbackMp4 = video.formats?.find((f) => !f.isDash);
           if (fallbackMp4 && fallbackMp4.formatId !== format.formatId) {
             switchResolution(fallbackMp4, vEl.currentTime || 0);
+            return;
           }
         }
+        failoverNextSource();
       };
 
       vEl.addEventListener("loadedmetadata", onLoadedMeta, { once: true });
@@ -381,6 +408,8 @@ export const MobileVideoPlayer: React.FC<MobileVideoPlayerProps> = ({
       lastSavedTimeRef.current = now;
       updateWatchProgress(now, vEl.duration || duration);
     }
+
+    handleTimeTick(vEl, now, vEl.duration || duration);
   };
 
   const togglePlay = () => {
@@ -474,7 +503,7 @@ export const MobileVideoPlayer: React.FC<MobileVideoPlayerProps> = ({
     startX: number;
     startY: number;
     startTime: number;
-    mode: "none" | "seek" | "volume" | "brightness";
+    mode: "none" | "seek" | "volume" | "brightness" | "episode_swipe";
     initialTime: number;
     initialVolume: number;
     initialBrightness: number;
@@ -534,12 +563,30 @@ export const MobileVideoPlayer: React.FC<MobileVideoPlayerProps> = ({
       if (absEffectiveX > 14 && absEffectiveX > absEffectiveY) {
         s.mode = "seek";
       } else if (absEffectiveY > 14 && absEffectiveY > absEffectiveX) {
-        const isLeftHalf = effectiveStartX < effectiveTotalWidth * 0.5;
-        s.mode = isLeftHalf ? "brightness" : "volume";
+        if (
+          isVerticalLayout &&
+          !isRotated &&
+          (video.episodes?.length || 0) > 1 &&
+          effectiveStartX >= effectiveTotalWidth * 0.25 &&
+          effectiveStartX <= effectiveTotalWidth * 0.75
+        ) {
+          s.mode = "episode_swipe";
+        } else {
+          const isLeftHalf = effectiveStartX < effectiveTotalWidth * 0.5;
+          s.mode = isLeftHalf ? "brightness" : "volume";
+        }
       }
     }
 
-    if (s.mode === "seek") {
+    if (s.mode === "episode_swipe") {
+      if (effectiveDy < -40 && nextEpisode) {
+        setSwipeEpisodeHUD("next");
+      } else if (effectiveDy > 40 && prevEpisode) {
+        setSwipeEpisodeHUD("prev");
+      } else {
+        setSwipeEpisodeHUD(null);
+      }
+    } else if (s.mode === "seek") {
       // Horizontal scrub across effective width: max ±90s across screen width
       const ratio = effectiveDx / effectiveTotalWidth;
       const scrubRange = Math.min(180, Math.max(60, duration * 0.3));
@@ -581,6 +628,17 @@ export const MobileVideoPlayer: React.FC<MobileVideoPlayerProps> = ({
     const dx = endTouch.clientX - s.startX;
     const dy = endTouch.clientY - s.startY;
     const moved = Math.sqrt(dx * dx + dy * dy);
+
+    if (s.mode === "episode_swipe") {
+      setSwipeEpisodeHUD(null);
+      s.mode = "none";
+      if (dy < -65 && nextEpisode) {
+        switchEpisode(nextEpisode);
+      } else if (dy > 65 && prevEpisode) {
+        switchEpisode(prevEpisode);
+      }
+      return;
+    }
 
     // Apply seek if in scrub mode
     if (s.mode === "seek" && touchSeekHUD) {
@@ -679,17 +737,38 @@ export const MobileVideoPlayer: React.FC<MobileVideoPlayerProps> = ({
         webkit-playsinline="true"
         x5-video-player-type="h5-page"
         style={{ filter: `brightness(${brightness})` }}
+        onLoadedMetadata={(e) => {
+          const el = e.currentTarget;
+          if (el.videoWidth > 0 && el.videoHeight > 0) {
+            const isVert = el.videoWidth / el.videoHeight < 0.85;
+            setDetectedVertical(isVert);
+            if (onAspectDetected) onAspectDetected(isVert);
+          }
+        }}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
         onTimeUpdate={handleTimeUpdate}
         onWaiting={() => setIsBuffering(true)}
-        onPlaying={() => setIsBuffering(false)}
+        onPlaying={() => {
+          setIsBuffering(false);
+          markPlaybackSuccess();
+        }}
         onEnded={() => {
           if (nextEpisode) switchEpisode(nextEpisode);
         }}
-        className="w-full h-full object-contain pointer-events-none"
+        className={`w-full h-full pointer-events-none ${
+          playerFillMode === "cover" ? "object-cover" : "object-contain"
+        }`}
       />
       <audio ref={audioRef} className="hidden" preload="auto" />
+
+      {swipeEpisodeHUD && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-40">
+          <div className="px-4 py-2.5 rounded-2xl bg-black/80 backdrop-blur-md border border-white/20 text-white text-xs font-bold shadow-2xl">
+            {swipeEpisodeHUD === "next" ? "松手切换下一集" : "松手切换上一集"}
+          </div>
+        </div>
+      )}
 
       {/* Double Tap Animation Overlay */}
       {doubleTapAnim === "left" && (
@@ -876,6 +955,79 @@ export const MobileVideoPlayer: React.FC<MobileVideoPlayerProps> = ({
 
         {/* Top Right Actions */}
         <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={() => {
+              const order: Array<"auto" | "vertical" | "landscape"> = [
+                "auto",
+                "vertical",
+                "landscape",
+              ];
+              const next = order[(order.indexOf(playerViewMode) + 1) % order.length];
+              setPlayerViewMode(next);
+              const label =
+                next === "vertical"
+                  ? "竖屏沉浸（支持上下滑切集）"
+                  : next === "landscape"
+                  ? "常规横屏"
+                  : "自动识别";
+              showToast(`视图模式：${label}`);
+              resetControlsTimer();
+            }}
+            className={`px-2 py-1 rounded-full border text-[11px] font-semibold flex items-center gap-1 active:scale-95 transition-all ${
+              playerViewMode !== "auto"
+                ? "bg-sky-500/80 border-sky-400 text-white"
+                : "bg-white/15 border-white/20 text-white"
+            }`}
+            title="切换竖屏/横屏视图模式"
+          >
+            {isVerticalLayout ? (
+              <Smartphone className="w-3 h-3" />
+            ) : (
+              <Monitor className="w-3 h-3" />
+            )}
+            <span>
+              {playerViewMode === "vertical"
+                ? "竖屏"
+                : playerViewMode === "landscape"
+                ? "横屏"
+                : "自动"}
+            </span>
+          </button>
+
+          <button
+            onClick={() => {
+              const next = playerFillMode === "contain" ? "cover" : "contain";
+              setPlayerFillMode(next);
+              showToast(next === "cover" ? "画面填充：铺满" : "画面填充：适应");
+              resetControlsTimer();
+            }}
+            className={`px-2 py-1 rounded-full border text-[11px] font-semibold flex items-center gap-1 active:scale-95 transition-all ${
+              playerFillMode === "cover"
+                ? "bg-sky-500/80 border-sky-400 text-white"
+                : "bg-white/15 border-white/20 text-white"
+            }`}
+            title="切换画面填充比例"
+          >
+            <Crop className="w-3 h-3" />
+            <span>{playerFillMode === "cover" ? "铺满" : "适应"}</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setShowSkipSheet(true);
+              setShowControls(true);
+            }}
+            className={`px-2 py-1 rounded-full border text-[11px] font-semibold flex items-center gap-1 active:scale-95 transition-all ${
+              skipConfig.introSec > 0 || skipConfig.outroSec > 0
+                ? "bg-amber-500/80 border-amber-400 text-white"
+                : "bg-white/15 border-white/20 text-white"
+            }`}
+            title="设置跳过片头片尾"
+          >
+            <FastForward className="w-3 h-3" />
+            <span>跳过</span>
+          </button>
+
           {/* Quality Pill */}
           <button
             onClick={() => {
@@ -1156,6 +1308,87 @@ export const MobileVideoPlayer: React.FC<MobileVideoPlayerProps> = ({
                   </button>
                 );
               })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSkipSheet && (
+        <div
+          onClick={() => setShowSkipSheet(false)}
+          onTouchStart={(e) => e.stopPropagation()}
+          className="absolute inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-xs rounded-2xl bg-slate-900 border border-white/15 p-4 space-y-3 text-white shadow-2xl"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold">剧集跳过记忆</span>
+              <button
+                onClick={() => setShowSkipSheet(false)}
+                className="p-1 rounded-full bg-white/10 text-white/70 hover:text-white"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <div className="space-y-2 text-xs">
+              <div className="flex items-center justify-between bg-white/5 px-3 py-2 rounded-xl">
+                <span>跳过片头</span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => updateSkipConfig({ introSec: skipConfig.introSec - 15 })}
+                    className="px-2 py-0.5 rounded bg-white/10"
+                  >
+                    -15s
+                  </button>
+                  <span className="font-mono w-10 text-center">{skipConfig.introSec}s</span>
+                  <button
+                    onClick={() => updateSkipConfig({ introSec: skipConfig.introSec + 15 })}
+                    className="px-2 py-0.5 rounded bg-white/10"
+                  >
+                    +15s
+                  </button>
+                  <button
+                    onClick={() => updateSkipConfig({ introSec: Math.round(currentTime) })}
+                    className="px-2 py-0.5 rounded bg-sky-500/80 text-white text-[10px]"
+                  >
+                    当前点
+                  </button>
+                </div>
+              </div>
+              <div className="flex items-center justify-between bg-white/5 px-3 py-2 rounded-xl">
+                <span>提前切下集</span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => updateSkipConfig({ outroSec: skipConfig.outroSec - 15 })}
+                    className="px-2 py-0.5 rounded bg-white/10"
+                  >
+                    -15s
+                  </button>
+                  <span className="font-mono w-10 text-center">{skipConfig.outroSec}s</span>
+                  <button
+                    onClick={() => updateSkipConfig({ outroSec: skipConfig.outroSec + 15 })}
+                    className="px-2 py-0.5 rounded bg-white/10"
+                  >
+                    +15s
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center justify-between pt-1">
+              <button
+                onClick={() => updateSkipConfig({ introSec: 0, outroSec: 0 })}
+                className="text-[11px] text-white/60 hover:text-white"
+              >
+                清零重置
+              </button>
+              <button
+                onClick={() => setShowSkipSheet(false)}
+                className="px-4 py-1.5 rounded-xl bg-sky-500 text-white text-xs font-bold"
+              >
+                完成
+              </button>
             </div>
           </div>
         </div>

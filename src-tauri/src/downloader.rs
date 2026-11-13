@@ -119,6 +119,7 @@ async fn run_native_http_download(
         &params.url,
         Some(params.title.as_str()),
         params.proxy_url.as_deref(),
+        None,
     )
     .await
     {

@@ -109,6 +109,8 @@ fn shared_client() -> &'static reqwest::Client {
             .danger_accept_invalid_certs(true)
             .connect_timeout(std::time::Duration::from_secs(10))
             .pool_max_idle_per_host(16)
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .tcp_nodelay(true)
             .build()
             .expect("Failed to initialize proxy HTTP client")
     })
@@ -359,6 +361,27 @@ async fn proxy_stream_handler(
     Query(query): Query<StreamQuery>,
     req_headers: HeaderMap,
 ) -> impl IntoResponse {
+    let has_range = req_headers.contains_key(header::RANGE);
+    let is_cacheable_seg = !has_range
+        && (query.url.contains(".ts")
+            || query.url.contains(".m4s")
+            || query.url.contains(".aac"));
+
+    if is_cacheable_seg {
+        if let Some(cached) = crate::proxy_cache::get_cached_segment(&query.url) {
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header("Access-Control-Allow-Origin", "*")
+                .header("Access-Control-Allow-Headers", "*")
+                .header("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges")
+                .header(header::CONTENT_TYPE, cached.content_type)
+                .header(header::CONTENT_LENGTH, cached.bytes.len())
+                .header(header::ACCEPT_RANGES, "bytes")
+                .body(Body::from(cached.bytes))
+                .unwrap_or_else(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Cache error").into_response());
+        }
+    }
+
     let client = shared_client();
 
     let mut merged_headers: HashMap<String, String> = HashMap::new();
@@ -437,6 +460,7 @@ async fn proxy_stream_handler(
                 upstream_ct
             };
 
+            let final_content_type_clone = final_content_type.clone();
             resp_builder = resp_builder.header(header::CONTENT_TYPE, final_content_type);
 
             for key in [
@@ -451,6 +475,25 @@ async fn proxy_stream_handler(
 
             if upstream.headers().get(header::ACCEPT_RANGES).is_none() {
                 resp_builder = resp_builder.header(header::ACCEPT_RANGES, "bytes");
+            }
+
+            let content_len_opt = upstream.content_length();
+            if is_cacheable_seg
+                && status.is_success()
+                && content_len_opt.map(|l| l <= 8 * 1024 * 1024).unwrap_or(false)
+            {
+                if let Ok(bytes) = upstream.bytes().await {
+                    let raw = bytes.to_vec();
+                    crate::proxy_cache::put_cached_segment(
+                        query.url.clone(),
+                        raw.clone(),
+                        final_content_type_clone,
+                    );
+                    return resp_builder.body(Body::from(raw)).unwrap_or_else(|_| {
+                        (StatusCode::INTERNAL_SERVER_ERROR, "Stream error").into_response()
+                    });
+                }
+                return (StatusCode::BAD_GATEWAY, "Upstream read error").into_response();
             }
 
             let stream = upstream.bytes_stream();
@@ -477,34 +520,43 @@ fn is_ad_segment_url(url: &str) -> bool {
 }
 
 async fn proxy_m3u8_handler(Query(query): Query<StreamQuery>) -> impl IntoResponse {
-    let client = shared_client();
+    let content = if let Some((cached_body, _)) = crate::proxy_cache::get_cached_m3u8(&query.url) {
+        cached_body
+    } else {
+        let client = shared_client();
 
-    let mut req = client
-        .get(&query.url)
-        .header(
-            "User-Agent",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-        );
-    if let Ok(parsed) = reqwest::Url::parse(&query.url) {
-        if let Some(host) = parsed.host_str() {
-            let parts: Vec<&str> = host.split('.').collect();
-            let base_domain = if parts.len() >= 2 {
-                format!("{}.{}", parts[parts.len() - 2], parts[parts.len() - 1])
-            } else {
-                host.to_string()
-            };
-            req = req.header("Referer", format!("{}://www.{}/", parsed.scheme(), base_domain));
+        let mut req = client
+            .get(&query.url)
+            .header(
+                "User-Agent",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            );
+        if let Ok(parsed) = reqwest::Url::parse(&query.url) {
+            if let Some(host) = parsed.host_str() {
+                let parts: Vec<&str> = host.split('.').collect();
+                let base_domain = if parts.len() >= 2 {
+                    format!("{}.{}", parts[parts.len() - 2], parts[parts.len() - 1])
+                } else {
+                    host.to_string()
+                };
+                req = req.header("Referer", format!("{}://www.{}/", parsed.scheme(), base_domain));
+            }
         }
-    }
 
-    let resp = match req.send().await {
-        Ok(r) => r,
-        Err(e) => return (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
-    };
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(e) => return (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
+        };
 
-    let content = match resp.text().await {
-        Ok(t) => t,
-        Err(e) => return (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
+        let final_url = resp.url().to_string();
+        let text = match resp.text().await {
+            Ok(t) => t,
+            Err(e) => return (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
+        };
+        if text.contains("#EXTM3U") {
+            crate::proxy_cache::put_cached_m3u8(query.url.clone(), text.clone(), final_url);
+        }
+        text
     };
 
     let port = PROXY_PORT.load(Ordering::Relaxed);

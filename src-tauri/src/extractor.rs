@@ -4,11 +4,20 @@ use crate::models::{
     VideoFormat, VideoMetadata,
 };
 use flate2::read::DeflateDecoder;
-use futures_util::future::join_all;
+use futures_util::stream::{FuturesUnordered, StreamExt};
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr};
+use std::time::Instant;
+use tauri::{AppHandle, Emitter};
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppendSourcesPayload {
+    pub target_url: String,
+    pub sources: Vec<MediaSource>,
+}
 
 #[inline]
 fn dec(bytes: &[u8]) -> String {
@@ -346,42 +355,93 @@ async fn query_single_vod_api(
     ))
 }
 
+async fn query_single_vod_api_timed(
+    source_id: String,
+    source_name: String,
+    api_base: String,
+    base_kw: String,
+    full_kw: String,
+    preferred_ep: Option<usize>,
+) -> Option<(MediaSource, String, String)> {
+    let start = Instant::now();
+    let res = query_single_vod_api(
+        source_id.clone(),
+        source_name,
+        api_base,
+        base_kw,
+        full_kw,
+        preferred_ep,
+    )
+    .await;
+    let elapsed = start.elapsed().as_millis() as u64;
+    crate::health_tracker::record_source_result(&source_id, res.is_some(), elapsed);
+    res
+}
+
 async fn fetch_aggregated_sources(
     base_kw: &str,
     full_kw: &str,
     preferred_ep: Option<usize>,
+    app: Option<&AppHandle>,
+    target_url: &str,
 ) -> (Vec<MediaSource>, Option<(String, String, String)>) {
-    let providers = crate::sources_config::get_active_vod_providers();
+    let mut providers = crate::sources_config::get_active_vod_providers();
     if providers.is_empty() {
         return (vec![], None);
     }
-    let tasks = providers
-        .into_iter()
-        .map(|p| {
-            query_single_vod_api(
-                p.id,
-                p.name,
-                p.api_base,
-                base_kw.to_string(),
-                full_kw.to_string(),
-                preferred_ep,
-            )
-        })
-        .collect::<Vec<_>>();
+    providers.sort_by(|a, b| {
+        let sa = crate::health_tracker::score_source(&a.id);
+        let sb = crate::health_tracker::score_source(&b.id);
+        sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
+    });
 
-    let results = join_all(tasks).await;
-    let mut sources = Vec::new();
-    let mut first_meta: Option<(String, String, String)> = None;
-
-    for item in results.into_iter().flatten() {
-        let (src, pic, actor) = item;
-        if first_meta.is_none() {
-            first_meta = Some((src.matched_title.clone(), pic, actor));
-        }
-        sources.push(src);
+    let mut futs = FuturesUnordered::new();
+    for p in providers {
+        futs.push(query_single_vod_api_timed(
+            p.id,
+            p.name,
+            p.api_base,
+            base_kw.to_string(),
+            full_kw.to_string(),
+            preferred_ep,
+        ));
     }
 
-    (sources, first_meta)
+    let mut first_sources = Vec::new();
+    let mut first_meta: Option<(String, String, String)> = None;
+
+    while let Some(res) = futs.next().await {
+        if let Some((src, pic, actor)) = res {
+            first_meta = Some((src.matched_title.clone(), pic, actor));
+            first_sources.push(src);
+            break;
+        }
+    }
+
+    if !first_sources.is_empty() {
+        if let Some(app_handle) = app.cloned() {
+            let url_owned = target_url.to_string();
+            tokio::spawn(async move {
+                while let Some(res) = futs.next().await {
+                    if let Some((src, _, _)) = res {
+                        let payload = AppendSourcesPayload {
+                            target_url: url_owned.clone(),
+                            sources: vec![src],
+                        };
+                        let _ = app_handle.emit("media-sources-append", payload);
+                    }
+                }
+            });
+        } else {
+            while let Some(res) = futs.next().await {
+                if let Some((src, _, _)) = res {
+                    first_sources.push(src);
+                }
+            }
+        }
+    }
+
+    (first_sources, first_meta)
 }
 
 fn canonicalize_for_parser(raw_url: &str) -> String {
@@ -1061,6 +1121,7 @@ pub async fn parse_url_entry(
     raw_url: &str,
     page_title_hint: Option<&str>,
     _proxy_url: Option<&str>,
+    app: Option<&AppHandle>,
 ) -> Result<VideoMetadata, String> {
     let trimmed = raw_url.trim();
     let (platform, platform_name) = detect_platform(trimmed);
@@ -1193,7 +1254,7 @@ pub async fn parse_url_entry(
     };
 
     let (mut aggregated_sources, mut vod_meta) = if !base_kw.is_empty() {
-        fetch_aggregated_sources(&base_kw, &full_kw, preferred_ep).await
+        fetch_aggregated_sources(&base_kw, &full_kw, preferred_ep, app, trimmed).await
     } else {
         (vec![], None)
     };
@@ -1237,7 +1298,7 @@ pub async fn parse_url_entry(
     if aggregated_sources.is_empty() {
         let (fb_base, fb_full) = default_platform_showcase_title(&platform);
         if !fb_base.trim().is_empty() {
-            let (fb_sources, fb_meta) = fetch_aggregated_sources(fb_base, fb_full, Some(1)).await;
+            let (fb_sources, fb_meta) = fetch_aggregated_sources(fb_base, fb_full, Some(1), app, trimmed).await;
             if !fb_sources.is_empty() {
                 aggregated_sources = fb_sources;
             }
@@ -1384,7 +1445,7 @@ pub async fn parse_url_entry(
 }
 
 pub async fn parse_video(raw_url: &str) -> Result<VideoMetadata, String> {
-    parse_url_entry(raw_url, None, None).await
+    parse_url_entry(raw_url, None, None, None).await
 }
 
 fn extract_bvid(url: &str) -> Option<String> {
