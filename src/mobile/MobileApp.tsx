@@ -110,7 +110,7 @@ export const MobileApp: React.FC = () => {
   }, []);
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden vx-app select-none transition-colors duration-200">
+    <div className="flex flex-col h-screen w-screen overflow-hidden vx-app select-none">
       {/* Dedicated Mobile Header (hidden in mobile fullscreen) */}
       {!isMobileFullscreen && <MobileHeader />}
 

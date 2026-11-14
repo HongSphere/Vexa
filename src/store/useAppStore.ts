@@ -141,6 +141,7 @@ interface AppState {
   showToast: (msg: string) => void;
 
   sourcesConfig: SourcesConfig;
+  sourcesLoaded: boolean;
   loadSourcesConfig: () => Promise<void>;
   importSources: (jsonStr: string) => Promise<void>;
   importSourcesFromUrl: (url: string) => Promise<void>;
@@ -199,10 +200,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   clearPendingWebviewNavUrl: () => set({ pendingWebviewNavUrl: null }),
 
   sourcesConfig: { sites: [], vodProviders: [], parseLines: [] },
+  sourcesLoaded: false,
   loadSourcesConfig: async () => {
     try {
       const cfg = await getSourcesConfig();
-      set({ sourcesConfig: cfg });
+      set({ sourcesConfig: cfg, sourcesLoaded: true });
       const currentActive = get().activePlatform;
       if (cfg.sites && cfg.sites.length > 0) {
         if (!cfg.sites.some((s) => s.id === currentActive)) {
@@ -215,6 +217,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       }
     } catch (e) {
+      set({ sourcesLoaded: true });
       console.error("加载规则配置失败:", e);
     }
   },

@@ -21,6 +21,7 @@ export const MobileDiscoverView: React.FC = () => {
     setCurrentWebviewUrl,
     loadAndPlayUrl,
     sourcesConfig,
+    sourcesLoaded,
     history,
     setActiveTab,
     isParsing,
@@ -31,8 +32,9 @@ export const MobileDiscoverView: React.FC = () => {
   const [viewMode, setViewMode] = useState<"portal" | "webview">("portal");
   const [activeInitialUrl, setActiveInitialUrl] = useState<string>("");
   const [currentWebviewTitle, setCurrentWebviewTitle] = useState<string>("");
-  const [historyDepth, setHistoryDepth] = useState<number>(1);
+  const [iframeLoading, setIframeLoading] = useState<boolean>(false);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const navStackRef = useRef<string[]>([]);
 
   const sites = sourcesConfig.sites || [];
   const currentSite =
@@ -179,12 +181,28 @@ export const MobileDiscoverView: React.FC = () => {
     await loadAndPlayUrl(query, 0, undefined, activeTitle);
   };
 
+  const normalizeNavUrl = (u: string) => u.trim().replace(/\/+$/, "");
+
   const handleBack = () => {
-    if (historyDepth > 1) {
-      setHistoryDepth((prev) => Math.max(1, prev - 1));
+    const stack = navStackRef.current;
+    if (stack.length > 1) {
+      const currentTop = stack[stack.length - 1];
+      stack.pop();
+      const prevUrl = stack[stack.length - 1];
       try {
         iframeRef.current?.contentWindow?.postMessage({ type: "VEXA_NAV_BACK" }, "*");
       } catch {}
+      window.setTimeout(() => {
+        const latestTop = navStackRef.current[navStackRef.current.length - 1];
+        const stillOnSame =
+          normalizeNavUrl(useAppStore.getState().currentWebviewUrl || "") ===
+          normalizeNavUrl(currentTop);
+        if (stillOnSame && latestTop === prevUrl && iframeRef.current && proxyPort) {
+          setIframeLoading(true);
+          setCurrentWebviewUrl(prevUrl);
+          iframeRef.current.src = `http://127.0.0.1:${proxyPort}/web?url=${encodeURIComponent(prevUrl)}`;
+        }
+      }, 280);
     } else {
       setViewMode("portal");
     }
@@ -193,24 +211,43 @@ export const MobileDiscoverView: React.FC = () => {
   useEffect(() => {
     const handleMsg = (e: MessageEvent) => {
       if (e.data?.type === "VEXA_NAV_URL" && e.data?.url) {
-        setCurrentWebviewUrl(e.data.url);
+        const incomingUrl = String(e.data.url).trim();
+        setCurrentWebviewUrl(incomingUrl);
         if (e.data.title && typeof e.data.title === "string" && e.data.title.trim()) {
           setCurrentWebviewTitle(e.data.title.trim());
         }
-        if (activeInitialUrl && e.data.url !== activeInitialUrl) {
-          setHistoryDepth((prev) => prev + 1);
+        const stack = navStackRef.current;
+        const top = stack[stack.length - 1] || "";
+        if (incomingUrl && normalizeNavUrl(incomingUrl) !== normalizeNavUrl(top)) {
+          if (
+            stack.length >= 2 &&
+            normalizeNavUrl(incomingUrl) === normalizeNavUrl(stack[stack.length - 2])
+          ) {
+            stack.pop();
+          } else {
+            stack.push(incomingUrl);
+          }
         }
       }
     };
     window.addEventListener("message", handleMsg);
     return () => window.removeEventListener("message", handleMsg);
-  }, [setCurrentWebviewUrl, activeInitialUrl]);
+  }, [setCurrentWebviewUrl]);
 
-  const iframeSrc = rawTargetUrl
-    ? proxyPort
+  const iframeSrc =
+    rawTargetUrl && proxyPort
       ? `http://127.0.0.1:${proxyPort}/web?url=${encodeURIComponent(rawTargetUrl)}`
-      : rawTargetUrl
-    : "";
+      : "";
+
+  useEffect(() => {
+    if (viewMode !== "webview" || !iframeSrc) {
+      setIframeLoading(false);
+      return;
+    }
+    setIframeLoading(true);
+    const timer = window.setTimeout(() => setIframeLoading(false), 3000);
+    return () => window.clearTimeout(timer);
+  }, [viewMode, iframeSrc]);
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-slate-50 dark:bg-[#07090e] select-none">
@@ -241,7 +278,16 @@ export const MobileDiscoverView: React.FC = () => {
           )}
 
           {/* Platform Navigation Cards Grid */}
-          {sites.length === 0 ? (
+          {sites.length === 0 && !sourcesLoaded ? (
+            <div className="grid grid-cols-2 gap-2.5">
+              {Array.from({ length: 6 }).map((_, idx) => (
+                <div
+                  key={idx}
+                  className="p-3 rounded-2xl bg-white dark:bg-[#12151d] border border-black/[0.05] dark:border-white/[0.06] h-28 animate-pulse"
+                />
+              ))}
+            </div>
+          ) : sites.length === 0 ? (
             <div className="p-6 rounded-2xl bg-white dark:bg-[#12151d] border border-black/[0.06] dark:border-white/[0.08] text-center space-y-3 shadow-xs my-4">
               <div className="w-12 h-12 mx-auto rounded-2xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-500">
                 <PackageOpen className="w-6 h-6" />
@@ -284,7 +330,7 @@ export const MobileDiscoverView: React.FC = () => {
                         setActiveInitialUrl(targetUrl);
                         setCurrentWebviewUrl(targetUrl);
                         setCurrentWebviewTitle("");
-                        setHistoryDepth(1);
+                        navStackRef.current = targetUrl ? [targetUrl] : [];
                         setViewMode("webview");
                       }}
                       className="p-3.5 rounded-2xl bg-white dark:bg-[#12151d] border border-black/[0.06] dark:border-white/[0.08] shadow-sm space-y-2.5 flex flex-col justify-between active:scale-[0.98] transition-all cursor-pointer hover:border-sky-500/40"
@@ -386,15 +432,26 @@ export const MobileDiscoverView: React.FC = () => {
           </div>
 
           {/* Embedded Web View with Proxy & Sandbox Protection */}
-          {rawTargetUrl ? (
-            <div className="flex-1 w-full min-h-0 relative flex flex-col">
+          {iframeSrc ? (
+            <div className="flex-1 w-full min-h-0 relative flex flex-col bg-slate-50 dark:bg-[#07090e]">
+              {iframeLoading && (
+                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-slate-50 dark:bg-[#07090e] pointer-events-none">
+                  <RotateCw className="w-5 h-5 text-sky-500 animate-spin" />
+                  <span className="text-xs text-slate-400">正在加载页面...</span>
+                </div>
+              )}
               <iframe
                 ref={iframeRef}
                 key={`${activePlatform || "webview"}_${activeInitialUrl}`}
                 src={iframeSrc}
                 title={currentSite?.name || "站点视口"}
                 referrerPolicy="no-referrer"
-                className="w-full flex-1 border-0 bg-white"
+                onLoad={() => {
+                  window.setTimeout(() => setIframeLoading(false), 120);
+                }}
+                className={`w-full flex-1 border-0 bg-slate-50 dark:bg-[#07090e] transition-opacity duration-200 ${
+                  iframeLoading ? "opacity-0" : "opacity-100"
+                }`}
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
                 sandbox="allow-scripts allow-same-origin allow-forms allow-presentation allow-popups"
               />
