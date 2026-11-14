@@ -103,10 +103,15 @@ fn is_generic_platform_title(s: &str) -> bool {
         "404",
         "Not Found",
         "Error",
+        "无法播放",
     ];
     generic_words.iter().any(|&w| trimmed.eq_ignore_ascii_case(w) || (trimmed.starts_with(w) && trimmed.len() <= w.len() + 3))
         || trimmed.contains("404")
         || trimmed.contains("Not Found")
+        || trimmed.contains("那条视频不见了")
+        || trimmed.contains("视频不存在")
+        || trimmed.contains("页面不存在")
+        || trimmed.contains("内容已下线")
 }
 
 fn clean_single_title_candidate(raw: &str) -> Option<(String, String, Option<usize>)> {

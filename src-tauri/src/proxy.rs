@@ -1817,20 +1817,12 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {
     if (e.data.type === 'VEXA_REQ_PAGE_INFO') {{
       try {{
         var curUrl = toRealUrl(window.location.href) || upstreamBase;
-        var canonical = document.querySelector('link[rel="canonical"]');
-        if (canonical && canonical.href) {{
-          var cUrl = toRealUrl(canonical.href);
-          if (cUrl && cUrl.indexOf('127.0.0.1') === -1) curUrl = cUrl;
-        }}
-        var ogUrl = document.querySelector('meta[property="og:url"]');
-        if (ogUrl && ogUrl.content) {{
-          var oUrl = toRealUrl(ogUrl.content);
-          if (oUrl && oUrl.indexOf('127.0.0.1') === -1) curUrl = oUrl;
-        }}
-        var curTitle = document.title || '';
-        var ogTitle = document.querySelector('meta[property="og:title"]');
-        if (ogTitle && ogTitle.content) {{
-          curTitle = ogTitle.content;
+        var curTitle = (document.title || '').trim();
+        if (!curTitle) {{
+          var ogTitle = document.querySelector('meta[property="og:title"]');
+          if (ogTitle && ogTitle.content) {{
+            curTitle = ogTitle.content.trim();
+          }}
         }}
         if (realParent && realParent !== window) {{
           realParent.postMessage({{
