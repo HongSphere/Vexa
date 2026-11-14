@@ -259,6 +259,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           vEl.currentTime = targetSeek;
         }
         setIsBuffering(false);
+        vEl.play().catch(() => {});
       });
       hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
         if (data.details?.totalduration && isFinite(data.details.totalduration)) {

@@ -139,11 +139,17 @@ pub struct ApiProxyQuery {
     pub ref_url: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct LocalQuery {
+    pub path: String,
+}
+
 pub async fn start_local_stream_proxy() -> u16 {
     let app = Router::new()
         .route("/stream", get(proxy_stream_handler))
         .route("/m3u8", get(proxy_m3u8_handler))
         .route("/web", get(proxy_web_handler))
+        .route("/local", get(proxy_local_handler))
         .route("/api_proxy", axum::routing::any(proxy_api_handler))
         .fallback(proxy_fallback_handler);
 
@@ -1854,11 +1860,6 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {
       }} catch(err) {{}}
     }}
   }});
-          v2.volume = Math.max(0, Math.min(1, v2.volume + e.data.delta));
-        }}
-      }} catch(err) {{}}
-    }}
-  }});
 
   function isDisallowedScheme(u) {{
     if (!u || typeof u !== 'string') return false;
@@ -1943,6 +1944,7 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {
       }} catch(err) {{}}
     }}
   }}, true);
+  }} catch(e) {{}}
 }})();
 </script>
 "#
@@ -1992,4 +1994,119 @@ a[href*="itms-apps:"], a[href*="market:"], a[href*="intent:"] {
         .body(Body::from(final_html))
         .unwrap_or_else(|_| Response::new(Body::empty()))
         .into_response()
+}
+
+async fn proxy_local_handler(
+    Query(q): Query<LocalQuery>,
+    req_headers: HeaderMap,
+) -> Response {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+    let path = std::path::PathBuf::from(&q.path);
+    let mut file = match tokio::fs::File::open(&path).await {
+        Ok(f) => f,
+        Err(_) => {
+            return Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Body::from("File not found"))
+                .unwrap_or_else(|_| Response::new(Body::empty()));
+        }
+    };
+
+    let file_size = match file.metadata().await {
+        Ok(m) => m.len(),
+        Err(_) => {
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(Body::empty())
+                .unwrap_or_else(|_| Response::new(Body::empty()));
+        }
+    };
+
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let content_type = match ext.as_str() {
+        "mp3" => "audio/mpeg",
+        "m4a" => "audio/mp4",
+        "webm" => "video/webm",
+        "ts" => "video/mp2t",
+        "m3u8" => "application/vnd.apple.mpegurl",
+        _ => "video/mp4",
+    };
+
+    let mut start: u64 = 0;
+    let mut end: u64 = file_size.saturating_sub(1);
+    let mut is_range = false;
+
+    if let Some(range_val) = req_headers.get(header::RANGE).and_then(|v| v.to_str().ok()) {
+        if let Some(spec) = range_val.strip_prefix("bytes=") {
+            let parts: Vec<&str> = spec.split('-').collect();
+            if parts.len() == 2 {
+                if let Ok(s) = parts[0].trim().parse::<u64>() {
+                    start = s.min(file_size.saturating_sub(1));
+                    is_range = true;
+                }
+                if !parts[1].trim().is_empty() {
+                    if let Ok(e) = parts[1].trim().parse::<u64>() {
+                        end = e.min(file_size.saturating_sub(1));
+                    }
+                }
+            }
+        }
+    }
+
+    if start > end || file_size == 0 {
+        return Response::builder()
+            .status(StatusCode::RANGE_NOT_SATISFIABLE)
+            .header(header::CONTENT_RANGE, format!("bytes */{}", file_size))
+            .body(Body::empty())
+            .unwrap_or_else(|_| Response::new(Body::empty()));
+    }
+
+    let content_len = end - start + 1;
+    let _ = file.seek(std::io::SeekFrom::Start(start)).await;
+
+    let stream = futures_util::stream::unfold(
+        (file, content_len),
+        |(mut f, mut remaining)| async move {
+            if remaining == 0 {
+                return None;
+            }
+            let chunk_size = remaining.min(65536) as usize;
+            let mut buf = vec![0u8; chunk_size];
+            match f.read(&mut buf).await {
+                Ok(0) | Err(_) => None,
+                Ok(n) => {
+                    buf.truncate(n);
+                    remaining = remaining.saturating_sub(n as u64);
+                    Some((Ok::<_, std::io::Error>(axum::body::Bytes::from(buf)), (f, remaining)))
+                }
+            }
+        },
+    );
+
+    let mut builder = Response::builder()
+        .status(if is_range {
+            StatusCode::PARTIAL_CONTENT
+        } else {
+            StatusCode::OK
+        })
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::CONTENT_LENGTH, content_len.to_string())
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*");
+
+    if is_range {
+        builder = builder.header(
+            header::CONTENT_RANGE,
+            format!("bytes {}-{}/{}", start, end, file_size),
+        );
+    }
+
+    builder
+        .body(Body::from_stream(stream))
+        .unwrap_or_else(|_| Response::new(Body::empty()))
 }

@@ -9,6 +9,7 @@ import {
   getProxyPort,
   subscribeDownloadProgress,
   subscribePlatformWebviewUrl,
+  subscribeMediaSourcesAppend,
 } from "./services/api";
 
 export const App: React.FC = () => {
@@ -62,6 +63,7 @@ export const App: React.FC = () => {
 
     let unlistenDl: (() => void) | undefined;
     let unlistenWvUrl: (() => void) | undefined;
+    let unlistenSourcesAppend: (() => void) | undefined;
 
     subscribeDownloadProgress((task) => {
       upsertDownloadTask(task);
@@ -80,9 +82,20 @@ export const App: React.FC = () => {
       unlistenWvUrl = fn;
     });
 
+    subscribeMediaSourcesAppend((payload) => {
+      if (payload?.targetUrl && payload?.sources?.length) {
+        useAppStore
+          .getState()
+          .appendCurrentVideoSources(payload.targetUrl, payload.sources);
+      }
+    }).then((fn) => {
+      unlistenSourcesAppend = fn;
+    });
+
     return () => {
       if (unlistenDl) unlistenDl();
       if (unlistenWvUrl) unlistenWvUrl();
+      if (unlistenSourcesAppend) unlistenSourcesAppend();
     };
   }, []);
 

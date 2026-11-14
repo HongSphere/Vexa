@@ -272,9 +272,13 @@ fn get_source_health_scores() -> std::collections::HashMap<String, f64> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_process::init());
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
+    builder
         .setup(|app| {
             use tauri::Manager;
             if let Ok(dir) = app.path().app_config_dir().or_else(|_| app.path().app_data_dir()) {

@@ -15,6 +15,7 @@ export const MobileHistoryView: React.FC = () => {
 
   const [filter, setFilter] = useState<"all" | "favorites">("all");
   const [showClearModal, setShowClearModal] = useState(false);
+  const [failedThumbs, setFailedThumbs] = useState<Record<string, boolean>>({});
 
   const list =
     filter === "favorites"
@@ -87,10 +88,12 @@ export const MobileHistoryView: React.FC = () => {
               >
                 {/* 16:9 Thumbnail with Progress Indicator */}
                 <div className="w-24 h-14 rounded-xl overflow-hidden bg-slate-900 shrink-0 relative border border-white/5">
-                  {item.thumbnail ? (
+                  {item.thumbnail && !failedThumbs[item.id] ? (
                     <img
                       src={item.thumbnail}
                       alt={item.title}
+                      referrerPolicy="no-referrer"
+                      onError={() => setFailedThumbs((prev) => ({ ...prev, [item.id]: true }))}
                       className="w-full h-full object-cover"
                     />
                   ) : (

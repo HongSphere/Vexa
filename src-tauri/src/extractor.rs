@@ -1128,7 +1128,9 @@ pub async fn parse_url_entry(
 
     if trimmed.contains(".m3u8")
         || trimmed.contains(".mp4")
+        || trimmed.contains(".mp3")
         || trimmed.contains(".flv")
+        || trimmed.contains("/local?")
         || trimmed.contains("mime_type=video")
     {
         let is_hls = trimmed.contains(".m3u8");

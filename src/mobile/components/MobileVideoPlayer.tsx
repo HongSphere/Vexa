@@ -29,7 +29,7 @@ import {
   Smartphone,
   Monitor,
   Crop,
-  FastForward,
+  SlidersHorizontal,
 } from "lucide-react";
 import { VideoMetadata, VideoFormat } from "../../types/media";
 import { useAppStore } from "../../store/useAppStore";
@@ -203,12 +203,16 @@ export const MobileVideoPlayer: React.FC<MobileVideoPlayerProps> = ({
   }, [isMobileFullscreen]);
 
   const currentEpIndex = video.currentEpisodeIndex || 1;
-  const nextEpisode = video.episodes?.find(
-    (ep) => ep.index === currentEpIndex + 1
-  );
-  const prevEpisode = video.episodes?.find(
-    (ep) => ep.index === currentEpIndex - 1
-  );
+  const eps = video.episodes || [];
+  const currentEpPos = eps.findIndex((ep) => ep.index === currentEpIndex);
+  const nextEpisode =
+    currentEpPos >= 0
+      ? eps[currentEpPos + 1]
+      : eps.find((ep) => ep.index === currentEpIndex + 1);
+  const prevEpisode =
+    currentEpPos > 0
+      ? eps[currentEpPos - 1]
+      : eps.find((ep) => ep.index === currentEpIndex - 1);
 
   // Proxied Video / Audio URLs
   const proxiedVideoUrl = useMemo(
@@ -264,6 +268,7 @@ export const MobileVideoPlayer: React.FC<MobileVideoPlayerProps> = ({
           vEl.currentTime = targetSeek;
         }
         setIsBuffering(false);
+        vEl.play().catch(() => {});
       });
       hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
         if (
@@ -273,8 +278,15 @@ export const MobileVideoPlayer: React.FC<MobileVideoPlayerProps> = ({
           setDuration(data.details.totalduration);
         }
       });
-      hls.on(Hls.Events.ERROR, () => {
-        setIsBuffering(false);
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) {
+          if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            hls?.recoverMediaError();
+          } else {
+            setIsBuffering(false);
+            failoverNextSource();
+          }
+        }
       });
     } else {
       vEl.pause();
@@ -309,6 +321,7 @@ export const MobileVideoPlayer: React.FC<MobileVideoPlayerProps> = ({
           }
         }
         setIsBuffering(false);
+        vEl.play().catch(() => {});
       };
 
       const onError = () => {
@@ -329,6 +342,14 @@ export const MobileVideoPlayer: React.FC<MobileVideoPlayerProps> = ({
       return () => {
         vEl.removeEventListener("loadedmetadata", onLoadedMeta);
         vEl.removeEventListener("error", onError);
+        vEl.pause();
+        vEl.removeAttribute("src");
+        vEl.load();
+        if (aEl) {
+          aEl.pause();
+          aEl.removeAttribute("src");
+          aEl.load();
+        }
       };
     }
 
@@ -954,62 +975,26 @@ export const MobileVideoPlayer: React.FC<MobileVideoPlayerProps> = ({
         </div>
 
         {/* Top Right Actions */}
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-1 shrink-0 max-w-[66%] overflow-x-auto [&::-webkit-scrollbar]:hidden">
           <button
             onClick={() => {
-              const order: Array<"auto" | "vertical" | "landscape"> = [
-                "auto",
-                "vertical",
-                "landscape",
-              ];
-              const next = order[(order.indexOf(playerViewMode) + 1) % order.length];
-              setPlayerViewMode(next);
-              const label =
-                next === "vertical"
-                  ? "竖屏沉浸（支持上下滑切集）"
-                  : next === "landscape"
-                  ? "常规横屏"
-                  : "自动识别";
-              showToast(`视图模式：${label}`);
-              resetControlsTimer();
+              setActiveDrawer("quality");
+              setShowControls(true);
             }}
-            className={`px-2 py-1 rounded-full border text-[11px] font-semibold flex items-center gap-1 active:scale-95 transition-all ${
-              playerViewMode !== "auto"
-                ? "bg-sky-500/80 border-sky-400 text-white"
-                : "bg-white/15 border-white/20 text-white"
-            }`}
-            title="切换竖屏/横屏视图模式"
+            className="px-2 py-1 rounded-full bg-white/15 active:bg-white/25 border border-white/20 text-white text-[11px] font-semibold flex items-center gap-1 shrink-0 active:scale-95 transition-all"
           >
-            {isVerticalLayout ? (
-              <Smartphone className="w-3 h-3" />
-            ) : (
-              <Monitor className="w-3 h-3" />
-            )}
-            <span>
-              {playerViewMode === "vertical"
-                ? "竖屏"
-                : playerViewMode === "landscape"
-                ? "横屏"
-                : "自动"}
-            </span>
+            <Sparkles className="w-3 h-3 text-sky-400" />
+            <span>{qualityShortLabel}</span>
           </button>
 
           <button
             onClick={() => {
-              const next = playerFillMode === "contain" ? "cover" : "contain";
-              setPlayerFillMode(next);
-              showToast(next === "cover" ? "画面填充：铺满" : "画面填充：适应");
-              resetControlsTimer();
+              setActiveDrawer("speed");
+              setShowControls(true);
             }}
-            className={`px-2 py-1 rounded-full border text-[11px] font-semibold flex items-center gap-1 active:scale-95 transition-all ${
-              playerFillMode === "cover"
-                ? "bg-sky-500/80 border-sky-400 text-white"
-                : "bg-white/15 border-white/20 text-white"
-            }`}
-            title="切换画面填充比例"
+            className="px-2 py-1 rounded-full bg-white/15 active:bg-white/25 border border-white/20 text-white text-[11px] font-semibold shrink-0 active:scale-95 transition-all"
           >
-            <Crop className="w-3 h-3" />
-            <span>{playerFillMode === "cover" ? "铺满" : "适应"}</span>
+            <span>{playbackRate === 1 ? "倍速" : `${playbackRate}x`}</span>
           </button>
 
           <button
@@ -1017,48 +1002,27 @@ export const MobileVideoPlayer: React.FC<MobileVideoPlayerProps> = ({
               setShowSkipSheet(true);
               setShowControls(true);
             }}
-            className={`px-2 py-1 rounded-full border text-[11px] font-semibold flex items-center gap-1 active:scale-95 transition-all ${
-              skipConfig.introSec > 0 || skipConfig.outroSec > 0
-                ? "bg-amber-500/80 border-amber-400 text-white"
+            className={`px-2 py-1 rounded-full border text-[11px] font-semibold flex items-center gap-1 shrink-0 active:scale-95 transition-all ${
+              playerViewMode !== "auto" ||
+              playerFillMode === "cover" ||
+              skipConfig.introSec > 0 ||
+              skipConfig.outroSec > 0
+                ? "bg-sky-500/80 border-sky-400 text-white"
                 : "bg-white/15 border-white/20 text-white"
             }`}
-            title="设置跳过片头片尾"
+            title="视图、填充与跳过片头片尾调节"
           >
-            <FastForward className="w-3 h-3" />
-            <span>跳过</span>
+            <SlidersHorizontal className="w-3 h-3" />
+            <span>调节</span>
           </button>
 
-          {/* Quality Pill */}
-          <button
-            onClick={() => {
-              setActiveDrawer("quality");
-              setShowControls(true);
-            }}
-            className="px-2 py-1 rounded-full bg-white/15 active:bg-white/25 border border-white/20 text-white text-[11px] font-semibold flex items-center gap-1 active:scale-95 transition-all"
-          >
-            <Sparkles className="w-3 h-3 text-sky-400" />
-            <span>{qualityShortLabel}</span>
-          </button>
-
-          {/* Speed Pill */}
-          <button
-            onClick={() => {
-              setActiveDrawer("speed");
-              setShowControls(true);
-            }}
-            className="px-2 py-1 rounded-full bg-white/15 active:bg-white/25 border border-white/20 text-white text-[11px] font-semibold active:scale-95 transition-all"
-          >
-            <span>{playbackRate === 1 ? "倍速" : `${playbackRate}x`}</span>
-          </button>
-
-          {/* Quick Landscape / Portrait Toggle Button (in fullscreen when phone is held vertically) */}
           {isMobileFullscreen && isPortrait && (
             <button
               onClick={() => {
                 setForceLandscape((prev) => !prev);
                 resetControlsTimer();
               }}
-              className="px-2.5 py-1 rounded-full bg-white/15 active:bg-white/25 border border-white/20 text-white text-[11px] font-semibold flex items-center gap-1 active:scale-95 transition-all"
+              className="px-2 py-1 rounded-full bg-white/15 active:bg-white/25 border border-white/20 text-white text-[11px] font-semibold flex items-center gap-1 shrink-0 active:scale-95 transition-all"
               title={forceLandscape ? "切换为竖屏全屏" : "切换为横屏全屏"}
             >
               <RotateCw className="w-3 h-3 text-sky-400" />
@@ -1066,7 +1030,6 @@ export const MobileVideoPlayer: React.FC<MobileVideoPlayerProps> = ({
             </button>
           )}
 
-          {/* Download Button */}
           {onOpenDownloadModal && (
             <button
               onClick={onOpenDownloadModal}
@@ -1317,14 +1280,14 @@ export const MobileVideoPlayer: React.FC<MobileVideoPlayerProps> = ({
         <div
           onClick={() => setShowSkipSheet(false)}
           onTouchStart={(e) => e.stopPropagation()}
-          className="absolute inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+          className="fixed inset-0 z-[100000] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-xs rounded-2xl bg-slate-900 border border-white/15 p-4 space-y-3 text-white shadow-2xl"
+            className="w-full max-w-xs max-h-[88vh] overflow-y-auto rounded-2xl bg-slate-900 border border-white/15 p-4 space-y-3 text-white shadow-2xl"
           >
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold">剧集跳过记忆</span>
+              <span className="text-xs font-bold">播放调节与跳过记忆</span>
               <button
                 onClick={() => setShowSkipSheet(false)}
                 className="p-1 rounded-full bg-white/10 text-white/70 hover:text-white"
@@ -1333,6 +1296,56 @@ export const MobileVideoPlayer: React.FC<MobileVideoPlayerProps> = ({
               </button>
             </div>
             <div className="space-y-2 text-xs">
+              <div className="flex items-center justify-between bg-white/5 px-3 py-2 rounded-xl">
+                <span className="flex items-center gap-1.5">
+                  {isVerticalLayout ? <Smartphone className="w-3.5 h-3.5 text-sky-400" /> : <Monitor className="w-3.5 h-3.5 text-sky-400" />}
+                  <span>视图模式</span>
+                </span>
+                <div className="flex items-center gap-1">
+                  {(["auto", "vertical", "landscape"] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      onClick={() => {
+                        setPlayerViewMode(mode);
+                        showToast(
+                          mode === "vertical"
+                            ? "视图模式：竖屏沉浸"
+                            : mode === "landscape"
+                            ? "视图模式：常规横屏"
+                            : "视图模式：自动识别"
+                        );
+                      }}
+                      className={`px-2 py-1 rounded-lg text-[11px] font-semibold transition-all ${
+                        playerViewMode === mode ? "bg-sky-500 text-white" : "bg-white/10 text-white/75"
+                      }`}
+                    >
+                      {mode === "auto" ? "自动" : mode === "vertical" ? "竖屏" : "横屏"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex items-center justify-between bg-white/5 px-3 py-2 rounded-xl">
+                <span className="flex items-center gap-1.5">
+                  <Crop className="w-3.5 h-3.5 text-sky-400" />
+                  <span>画面填充</span>
+                </span>
+                <div className="flex items-center gap-1">
+                  {(["contain", "cover"] as const).map((fill) => (
+                    <button
+                      key={fill}
+                      onClick={() => {
+                        setPlayerFillMode(fill);
+                        showToast(fill === "cover" ? "画面填充：铺满" : "画面填充：适应");
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all ${
+                        playerFillMode === fill ? "bg-sky-500 text-white" : "bg-white/10 text-white/75"
+                      }`}
+                    >
+                      {fill === "contain" ? "适应" : "铺满"}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="flex items-center justify-between bg-white/5 px-3 py-2 rounded-xl">
                 <span>跳过片头</span>
                 <div className="flex items-center gap-1.5">

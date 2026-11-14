@@ -7,7 +7,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useAppStore } from "../../store/useAppStore";
-import { controlDownloadTask } from "../../services/api";
+import { controlDownloadTask, getProxyPort } from "../../services/api";
 import { DownloadStatus, DownloadTask } from "../../types/media";
 
 function getStatusBadge(status: DownloadStatus) {
@@ -38,6 +38,19 @@ export const MobileDownloadsView: React.FC = () => {
   const activeList = downloads.filter((d) => d.status !== "completed");
   const completedList = downloads.filter((d) => d.status === "completed");
   const displayedList = filter === "active" ? activeList : completedList;
+
+  const handlePlayLocal = async (task: DownloadTask) => {
+    if (task.outputPath) {
+      try {
+        const port = await getProxyPort();
+        const localUrl = `http://127.0.0.1:${port}/local?path=${encodeURIComponent(task.outputPath)}`;
+        await loadAndPlayUrl(localUrl, 0, undefined, task.title);
+        return;
+      } catch {
+      }
+    }
+    await loadAndPlayUrl(task.url, 0, undefined, task.title);
+  };
 
   const handleControl = async (
     task: DownloadTask,
@@ -134,7 +147,7 @@ export const MobileDownloadsView: React.FC = () => {
                     {isCompleted ? (
                       <>
                         <button
-                          onClick={() => loadAndPlayUrl(task.outputPath || task.url)}
+                          onClick={() => handlePlayLocal(task)}
                           className="p-1.5 rounded-xl bg-sky-500 text-white active:scale-90 transition-transform"
                           title="播放"
                         >
